@@ -32,7 +32,7 @@ VIAddVersionKey "ProductVersion" "${APP_VERSION}"
 Section "Install"
   SetOutPath "$INSTDIR"
   InitPluginsDir
-  File /oname=$PLUGINSDIR\web-install.ps1 "packaging\web-install.ps1"
+  File /oname=$PLUGINSDIR\web-install.ps1 "web-install.ps1"
   DetailPrint "Downloading Hindsight Local Manager components..."
   nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\web-install.ps1" -InstallDir "$INSTDIR" -Version "${APP_VERSION}" -BaseUrl "${ASSET_BASE_URL}"`
   Pop $0

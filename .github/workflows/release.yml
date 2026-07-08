@@ -80,6 +80,7 @@ jobs:
           $exe = 'build/bin/Hindsight Local Manager.exe'
           if (!(Test-Path -LiteralPath $exe)) { throw "Missing executable: $exe" }
           if (!(Test-Path -LiteralPath 'resources')) { throw "Missing bundled resources" }
+          if (Test-Path -LiteralPath 'resources/models') { Remove-Item -LiteralPath 'resources/models' -Recurse -Force }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item -LiteralPath $exe -Destination 'dist/Hindsight Local Manager.exe' -Force
           Copy-Item -LiteralPath resources -Destination dist/resources -Recurse

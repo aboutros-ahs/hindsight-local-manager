@@ -28,10 +28,10 @@ import {
 } from '../wailsjs/go/main/App';
 
 const app = document.querySelector('#app');
+document.title = 'Hindsight Local Manager';
 const state = { status: null, config: null, message: 'READY', busy: false, page: 'runtime', starting: new Set(), stopping: new Set(), openCodeInstall: null };
 let gridScrollTop = 0;
 let logScrollTop = 0;
-let logScrollHeight = 0;
 let logAutoFollow = true;
 
 async function refresh() {
@@ -52,12 +52,12 @@ function render() {
   if (existingLog) {
     logAutoFollow = existingLog.scrollHeight - existingLog.clientHeight - existingLog.scrollTop < 24;
     logScrollTop = existingLog.scrollTop;
-    logScrollHeight = existingLog.scrollHeight;
   }
   const s = state.status || {};
   const cfg = state.config || s.config || {};
   const hindsightRunning = Boolean(s.hindsight?.running || s.hindsight?.healthy);
   const uiRunning = Boolean(s.controlPlane?.running || s.controlPlane?.healthy);
+  const logText = escapeHtml((s.logTail || []).join('\n') || 'NO_LOGS');
   app.innerHTML = `
     <div class="shell">
       <header class="topbar">
@@ -85,6 +85,7 @@ function render() {
 
       <footer class="footer"><span><i></i>${escapeHtml(state.message)}</span><span>${escapeHtml(s.lastUpdated || '')}</span></footer>
       ${openCodeConfigDialog()}
+      ${setupProgressDialog(s.setup)}
     </div>`;
   bind();
   const grid = document.querySelector('.grid');
@@ -96,16 +97,12 @@ function render() {
   }
   const log = document.querySelector('#runtime-log');
   if (log) {
-    if (logAutoFollow) {
-      log.scrollTop = log.scrollHeight;
-    } else {
-      const delta = log.scrollHeight - logScrollHeight;
-      log.scrollTop = Math.max(0, logScrollTop + Math.max(0, delta));
-    }
+    requestAnimationFrame(() => {
+      log.scrollTop = logAutoFollow ? log.scrollHeight : logScrollTop;
+    });
     log.addEventListener('scroll', () => {
       logAutoFollow = log.scrollHeight - log.clientHeight - log.scrollTop < 24;
       logScrollTop = log.scrollTop;
-      logScrollHeight = log.scrollHeight;
     }, { passive: true });
   }
 }
@@ -169,8 +166,8 @@ function runtimePage(s, cfg, hindsightRunning, uiRunning) {
   const apiHealthy = Boolean(s.hindsight?.healthy);
   const uiStartDisabled = !apiHealthy && !uiRunning ? ' disabled title="Start Hindsight API first"' : '';
   const services = [
-    ['api', 'Hindsight API', s.hindsight, `<button data-action="${hindsightRunning ? 'stop-hindsight' : 'start-hindsight'}">${hindsightRunning ? 'STOP' : 'START'}</button>`],
-    ['ui', 'Hindsight UI', s.controlPlane, `<button data-action="${uiRunning ? 'stop-ui' : 'start-ui'}"${uiRunning ? '' : uiStartDisabled}>${uiRunning ? 'STOP' : 'START'}</button><button data-action="open-ui">OPEN UI</button>`],
+    ['api', 'Hindsight API', s.hindsight, `<button data-action="toggle-hindsight">${hindsightRunning ? 'STOP' : 'START'}</button>`],
+    ['ui', 'Hindsight UI', s.controlPlane, `<button data-action="toggle-ui"${uiRunning ? '' : uiStartDisabled}>${uiRunning ? 'STOP' : 'START'}</button><button data-action="open-ui">OPEN UI</button>`],
   ];
   return `
     <section class="panel hero-panel">
@@ -214,7 +211,7 @@ function runtimePage(s, cfg, hindsightRunning, uiRunning) {
 
     <section class="panel log-panel">
       <div class="panel-head split-head"><div><p class="overline">LOGS</p><h2>Runtime Log</h2></div><button data-action="copy-log">COPY LOG</button></div>
-        <pre id="runtime-log">${escapeHtml((s.logTail || []).join('\n') || 'NO_LOGS')}</pre>
+        <pre id="runtime-log">${logText}</pre>
       </section>`;
 }
 
@@ -259,7 +256,7 @@ function serviceCard(name, service = {}, actions = '', lifecycle = null) {
   return `<div class="service-card ${tone}">
     <div><strong>${escapeHtml(name)}</strong><span>${status}</span></div>
     <code>${escapeHtml(service.url || '')}</code>
-    <p>${escapeHtml(service.detail || '')}</p>
+    <p>${escapeHtml(serviceText(service.detail || ''))}</p>
     ${actions ? `<div class="card-actions">${actions}</div>` : ''}
   </div>`;
 }
@@ -296,6 +293,30 @@ function openCodeConfigDialog() {
       </div>
       <div class="actions"><button data-action="cancel-opencode-config">CANCEL</button></div>
     </section>
+  </div>`;
+}
+
+function setupProgressDialog(setup = {}) {
+  if (!setup.active) return '';
+  const steps = setup.steps || [];
+  return `<div class="modal-backdrop setup-backdrop">
+    <section class="modal panel setup-modal">
+      <div class="panel-head"><p class="overline">LOCAL_SETUP</p><h2>${escapeHtml(setup.title || 'Preparing Services')}</h2></div>
+      <p>${escapeHtml(setup.message || 'Preparing local runtime dependencies...')}</p>
+      <div class="setup-step-list">
+        ${steps.map((step) => setupStep(step)).join('')}
+      </div>
+    </section>
+  </div>`;
+}
+
+function setupStep(step = {}) {
+  const progress = Math.max(0, Math.min(100, Number(step.progress) || 0));
+  const stateClass = step.state === 'complete' ? 'ok' : step.state === 'error' ? 'bad' : step.state === 'running' ? 'warn' : '';
+  return `<div class="setup-step ${stateClass}">
+    <div class="progress-meta"><span>${escapeHtml(step.name || 'Step')}</span><span>${escapeHtml(step.state || 'pending')}</span></div>
+    <div class="progress-bar"><i style="width:${progress}%"></i></div>
+    <p>${escapeHtml(step.detail || '')}</p>
   </div>`;
 }
 
@@ -342,10 +363,14 @@ async function runAction(action, source) {
     render();
     if (action === 'start-all') await StartAll();
     if (action === 'stop-all') await StopAll();
-    if (action === 'start-hindsight') await StartHindsight();
-    if (action === 'stop-hindsight') await StopHindsight();
-    if (action === 'start-ui') await StartControlPlane();
-    if (action === 'stop-ui') await StopControlPlane();
+    if (action === 'toggle-hindsight') {
+      if (state.status?.hindsight?.running || state.status?.hindsight?.healthy) await StopHindsight();
+      else await StartHindsight();
+    }
+    if (action === 'toggle-ui') {
+      if (state.status?.controlPlane?.running || state.status?.controlPlane?.healthy) await StopControlPlane();
+      else await StartControlPlane();
+    }
     if (action === 'open-ui') await OpenControlPlane();
     if (action === 'ensure-default-bank') await EnsureDefaultMemoryBank();
     if (action === 'copy-log') await CopyText((state.status?.logTail || []).join('\n'));
@@ -408,41 +433,41 @@ async function finishOpenCodeInstall(kind, path) {
 
 function markStarting(action) {
   if (action === 'start-all') state.starting = new Set(['api', 'ui']);
-  if (action === 'start-hindsight') state.starting = new Set([...state.starting, 'api']);
-  if (action === 'start-ui') state.starting = new Set([...state.starting, 'ui']);
+  if (action === 'toggle-hindsight' && !(state.status?.hindsight?.running || state.status?.hindsight?.healthy)) state.starting = new Set([...state.starting, 'api']);
+  if (action === 'toggle-ui' && !(state.status?.controlPlane?.running || state.status?.controlPlane?.healthy)) state.starting = new Set([...state.starting, 'ui']);
 }
 
 function clearStarting(action) {
   if (action === 'start-all') state.starting = new Set();
-  if (action === 'start-hindsight' || action === 'start-ui') {
+  if (action === 'toggle-hindsight' || action === 'toggle-ui') {
     const next = new Set(state.starting);
-    if (action === 'start-hindsight') next.delete('api');
-    if (action === 'start-ui') next.delete('ui');
+    if (action === 'toggle-hindsight') next.delete('api');
+    if (action === 'toggle-ui') next.delete('ui');
     state.starting = next;
   }
 }
 
 function markStopping(action) {
   if (action === 'stop-all') state.stopping = new Set(['api', 'ui']);
-  if (action === 'stop-hindsight') state.stopping = new Set([...state.stopping, 'api', 'ui']);
-  if (action === 'stop-ui') state.stopping = new Set([...state.stopping, 'ui']);
+  if (action === 'toggle-hindsight' && (state.status?.hindsight?.running || state.status?.hindsight?.healthy)) state.stopping = new Set([...state.stopping, 'api', 'ui']);
+  if (action === 'toggle-ui' && (state.status?.controlPlane?.running || state.status?.controlPlane?.healthy)) state.stopping = new Set([...state.stopping, 'ui']);
 }
 
 function clearStopping(action) {
   if (action === 'stop-all') state.stopping = new Set();
-  if (action === 'stop-hindsight' || action === 'stop-ui') {
+  if (action === 'toggle-hindsight' || action === 'toggle-ui') {
     const next = new Set(state.stopping);
-    if (action === 'stop-hindsight') {
+    if (action === 'toggle-hindsight') {
       next.delete('api');
       next.delete('ui');
     }
-    if (action === 'stop-ui') next.delete('ui');
+    if (action === 'toggle-ui') next.delete('ui');
     state.stopping = next;
   }
 }
 
 function isStopAction(action) {
-  return action === 'stop-all' || action === 'stop-hindsight' || action === 'stop-ui';
+  return action === 'stop-all' || action === 'toggle-hindsight' || action === 'toggle-ui';
 }
 
 function delay(ms) {
@@ -479,6 +504,10 @@ function escapeAttr(value) {
 
 function errorMessage(error) {
   return typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
+}
+
+function serviceText(value) {
+  return value;
 }
 
 refresh();

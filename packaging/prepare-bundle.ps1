@@ -61,10 +61,6 @@ Download-File "https://bootstrap.pypa.io/get-pip.py" $getPip
 & (Join-Path $pythonDir "python.exe") -m pip install --upgrade pip
 & (Join-Path $pythonDir "python.exe") -m pip install hindsight-api
 
-$env:HF_HOME = Join-Path $resources "models\huggingface"
-$env:SENTENCE_TRANSFORMERS_HOME = $env:HF_HOME
-& (Join-Path $pythonDir "python.exe") -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('BAAI/bge-small-en-v1.5'); CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
-
 Push-Location $controlPlaneDir
 try {
   if (!(Test-Path -LiteralPath "package.json")) {

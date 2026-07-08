@@ -73,6 +73,14 @@ pre { margin: 0; min-height: 260px; max-height: 430px; padding: 14px; overflow: 
 .progress-meta { display: flex; justify-content: space-between; color: var(--muted); font-family: var(--font-mono); font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; }
 .progress-bar { height: 11px; background: var(--surface-lower); border: 1px solid var(--border); overflow: hidden; }
 .progress-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--primary), var(--accent)); transition: width .2s ease; }
+.setup-backdrop { backdrop-filter: blur(3px); }
+.setup-modal { width: min(760px, 100%); }
+.setup-step-list { display: grid; gap: 12px; }
+.setup-step { padding: 12px; background: var(--surface-lower); border-left: 3px solid var(--border); }
+.setup-step.ok { border-left-color: var(--primary); }
+.setup-step.warn { border-left-color: var(--warn); }
+.setup-step.bad { border-left-color: var(--bad); }
+.setup-step p { margin: 8px 0 0; color: var(--muted); font-size: .82rem; line-height: 1.4; }
 .footer { flex: 0 0 34px; display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 0 24px; color: var(--muted); font-size: .62rem; border-top: 1px solid var(--border); }
 .footer span:first-child { display: inline-flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; }
 .modal-backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(0,0,0,.62); z-index: 20; }

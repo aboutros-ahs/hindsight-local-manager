@@ -52,6 +52,8 @@ type App struct {
 	forceQuit    bool
 	updateMu     sync.Mutex
 	updateStatus UpdateStatus
+	setupMu      sync.Mutex
+	setupStatus  SetupStatus
 }
 
 type BridgeConfig struct {
@@ -114,6 +116,20 @@ type IntegrationStatus struct {
 	Detail    string `json:"detail"`
 }
 
+type SetupStatus struct {
+	Active  bool        `json:"active"`
+	Title   string      `json:"title"`
+	Message string      `json:"message"`
+	Steps   []SetupStep `json:"steps"`
+}
+
+type SetupStep struct {
+	Name     string `json:"name"`
+	State    string `json:"state"`
+	Progress int    `json:"progress"`
+	Detail   string `json:"detail"`
+}
+
 type OpenCodeConfigChoice struct {
 	Label string `json:"label"`
 	Path  string `json:"path"`
@@ -135,6 +151,7 @@ type ManagerStatus struct {
 	Paths        map[string]string `json:"paths"`
 	Version      string            `json:"version"`
 	Update       UpdateStatus      `json:"update"`
+	Setup        SetupStatus       `json:"setup"`
 	LastUpdated  string            `json:"lastUpdated"`
 }
 
@@ -281,15 +298,26 @@ func (a *App) GetStatus() (ManagerStatus, error) {
 		},
 		Version:     appVersion,
 		Update:      a.GetUpdateStatus(),
+		Setup:       a.GetSetupStatus(),
 		LastUpdated: time.Now().Format(time.RFC3339),
 	}, nil
 }
 
 func (a *App) StartAll() error {
+	a.startSetup("Starting Hindsight services", []SetupStep{
+		{Name: "Hidden bridge", State: "pending", Progress: 0, Detail: "Waiting to start"},
+		{Name: "Embedding model", State: "pending", Progress: 0, Detail: "Checking local cache"},
+		{Name: "Hindsight API", State: "pending", Progress: 0, Detail: "Waiting to start"},
+		{Name: "Hindsight UI", State: "pending", Progress: 0, Detail: "Waiting for API"},
+	})
+	a.updateSetupStep("Hidden bridge", "running", 20, "Starting hidden bridge")
 	if err := a.StartBridge(); err != nil {
+		a.failSetup("Hidden bridge", err)
 		return err
 	}
+	a.updateSetupStep("Hidden bridge", "complete", 100, "Bridge ready")
 	if err := a.StartHindsight(); err != nil {
+		a.failSetup("Hindsight API", err)
 		return err
 	}
 	cfg, err := a.LoadConfig()
@@ -297,14 +325,20 @@ func (a *App) StartAll() error {
 		return err
 	}
 	if err := a.waitForHindsightReady(cfg, 60*time.Second); err != nil {
+		a.failSetup("Hindsight API", err)
 		return err
 	}
+	a.updateSetupStep("Hindsight API", "complete", 100, "API healthy")
 	if err := a.EnsureDefaultMemoryBank(); err != nil {
 		a.appendLog("default memory bank setup failed: " + err.Error())
 	}
+	a.updateSetupStep("Hindsight UI", "running", 40, "Starting UI")
 	if err := a.StartControlPlane(); err != nil {
+		a.failSetup("Hindsight UI", err)
 		return err
 	}
+	a.updateSetupStep("Hindsight UI", "complete", 100, "UI ready")
+	a.finishSetup("Services ready")
 	return nil
 }
 
@@ -375,12 +409,28 @@ func (a *App) StopBridge() error {
 }
 
 func (a *App) StartHindsight() error {
+	startedSetup := false
+	if !a.setupActive() {
+		startedSetup = true
+		a.startSetup("Starting Hindsight API", []SetupStep{
+			{Name: "Hidden bridge", State: "pending", Progress: 0, Detail: "Waiting to start"},
+			{Name: "Embedding model", State: "pending", Progress: 0, Detail: "Checking local cache"},
+			{Name: "Hindsight API", State: "pending", Progress: 0, Detail: "Waiting to start"},
+		})
+	}
 	if a.processRunning(a.hindsight) {
+		a.updateSetupStep("Hindsight API", "complete", 100, "Already running")
+		if startedSetup {
+			a.finishSetup("Hindsight API already running")
+		}
 		return nil
 	}
+	a.updateSetupStep("Hidden bridge", "running", 20, "Starting hidden bridge")
 	if err := a.StartBridge(); err != nil {
+		a.failSetup("Hidden bridge", err)
 		return err
 	}
+	a.updateSetupStep("Hidden bridge", "complete", 100, "Bridge ready")
 	cfg, err := a.LoadConfig()
 	if err != nil {
 		return err
@@ -391,8 +441,14 @@ func (a *App) StartHindsight() error {
 	}
 	exe, args, err := a.hindsightCommand(cfg)
 	if err != nil {
+		a.failSetup("Hindsight API", err)
 		return err
 	}
+	if err := a.ensureEmbeddingModel(cfg, exe); err != nil {
+		a.failSetup("Embedding model", err)
+		return err
+	}
+	a.updateSetupStep("Hindsight API", "running", 50, "Launching API process")
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, exe, args...)
 	setNoWindow(cmd)
@@ -402,6 +458,7 @@ func (a *App) StartHindsight() error {
 	stderr, _ := cmd.StderrPipe()
 	if err := cmd.Start(); err != nil {
 		cancel()
+		a.failSetup("Hindsight API", err)
 		return err
 	}
 	a.hindsight = &managedProcess{name: "hindsight", cmd: cmd, cancel: cancel, url: a.hindsightURL(cfg)}
@@ -410,6 +467,16 @@ func (a *App) StartHindsight() error {
 	go a.waitProcess(a.hindsight)
 	a.appendLog("hindsight starting at " + a.hindsightURL(cfg))
 	go a.ensureDefaultMemoryBankWhenReady(cfg)
+	if startedSetup {
+		go func() {
+			if err := a.waitForHindsightReady(cfg, 60*time.Second); err != nil {
+				a.failSetup("Hindsight API", err)
+				return
+			}
+			a.updateSetupStep("Hindsight API", "complete", 100, "API healthy")
+			a.finishSetup("Hindsight API ready")
+		}()
+	}
 	return nil
 }
 
@@ -423,7 +490,16 @@ func (a *App) StopHindsight() error {
 }
 
 func (a *App) StartControlPlane() error {
+	startedSetup := false
+	if !a.setupActive() {
+		startedSetup = true
+		a.startSetup("Starting Hindsight UI", []SetupStep{{Name: "Hindsight UI", State: "pending", Progress: 0, Detail: "Waiting to start"}})
+	}
 	if a.processRunning(a.controlPlane) {
+		a.updateSetupStep("Hindsight UI", "complete", 100, "Already running")
+		if startedSetup {
+			a.finishSetup("Hindsight UI already running")
+		}
 		return nil
 	}
 	cfg, err := a.LoadConfig()
@@ -431,20 +507,28 @@ func (a *App) StartControlPlane() error {
 		return err
 	}
 	if !checkHealth(a.hindsightURL(cfg) + "/health") {
+		a.failSetup("Hindsight UI", errors.New("start Hindsight API before starting Hindsight UI"))
 		return errors.New("start Hindsight API before starting Hindsight UI")
 	}
 	uiURL := "http://127.0.0.1:" + valueOr(cfg.ControlPlanePort, defaultUIPort)
 	if checkHealth(uiURL) {
 		a.appendLog("hindsight ui already available at " + uiURL)
+		a.updateSetupStep("Hindsight UI", "complete", 100, "Already available")
+		if startedSetup {
+			a.finishSetup("Hindsight UI already available")
+		}
 		return nil
 	}
 	if detail, inUse := portConflictDetail(valueOr(cfg.ControlPlanePort, defaultUIPort)); inUse {
+		a.failSetup("Hindsight UI", errors.New(detail))
 		return errors.New(detail)
 	}
 	exe, args, err := a.controlPlaneCommand()
 	if err != nil {
+		a.failSetup("Hindsight UI", err)
 		return err
 	}
+	a.updateSetupStep("Hindsight UI", "running", 60, "Launching UI process")
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, exe, args...)
 	setNoWindow(cmd)
@@ -458,6 +542,7 @@ func (a *App) StartControlPlane() error {
 	stderr, _ := cmd.StderrPipe()
 	if err := cmd.Start(); err != nil {
 		cancel()
+		a.failSetup("Hindsight UI", err)
 		return err
 	}
 	a.controlPlane = &managedProcess{name: "hindsight-ui", cmd: cmd, cancel: cancel, url: uiURL}
@@ -465,6 +550,10 @@ func (a *App) StartControlPlane() error {
 	go a.pipeProcess(stderr, "hindsight-ui:error")
 	go a.waitProcess(a.controlPlane)
 	a.appendLog("hindsight ui starting at " + a.controlPlane.url)
+	if startedSetup {
+		a.updateSetupStep("Hindsight UI", "complete", 100, "UI started")
+		a.finishSetup("Hindsight UI ready")
+	}
 	return nil
 }
 
@@ -706,6 +795,51 @@ func (a *App) ensureDefaultMemoryBankWhenReady(cfg ManagerConfig) {
 	}
 }
 
+func (a *App) ensureEmbeddingModel(cfg ManagerConfig, pythonExe string) error {
+	if !strings.EqualFold(filepath.Base(pythonExe), "python.exe") {
+		a.updateSetupStep("Embedding model", "complete", 100, "Using PATH runtime model cache")
+		return nil
+	}
+	marker := filepath.Join(a.modelCacheDir(), ".bge-small-en-v1.5-ready")
+	if fileExists(marker) {
+		a.updateSetupStep("Embedding model", "complete", 100, "Model cache ready")
+		return nil
+	}
+	a.updateSetupStep("Embedding model", "running", 15, "Preparing local embedding model")
+	if err := os.MkdirAll(a.modelCacheDir(), 0700); err != nil {
+		return err
+	}
+	cmd := exec.Command(pythonExe, "-c", "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')")
+	setNoWindow(cmd)
+	cmd.Dir = a.data
+	cmd.Env = append(os.Environ(), a.modelEnv()...)
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	a.updateSetupStep("Embedding model", "running", 45, "Downloading model files if missing")
+	go a.pipeProcess(stdout, "model")
+	go a.pipeProcess(stderr, "model:error")
+	if err := cmd.Wait(); err != nil {
+		return err
+	}
+	if err := os.WriteFile(marker, []byte(time.Now().Format(time.RFC3339)+"\n"), 0600); err != nil {
+		return err
+	}
+	a.updateSetupStep("Embedding model", "complete", 100, "Embedding model ready")
+	return nil
+}
+
+func (a *App) modelCacheDir() string { return filepath.Join(a.data, "cache", "huggingface") }
+
+func (a *App) modelEnv() []string {
+	return []string{
+		"HF_HOME=" + a.modelCacheDir(),
+		"SENTENCE_TRANSFORMERS_HOME=" + a.modelCacheDir(),
+	}
+}
+
 func (a *App) setBankConfig(cfg ManagerConfig, bankID, reflectMission, retainMission string) error {
 	body, err := json.Marshal(map[string]any{"updates": map[string]any{
 		"reflect_mission": reflectMission,
@@ -748,7 +882,79 @@ func (a *App) waitProcess(proc *managedProcess) {
 func (a *App) pipeProcess(reader io.Reader, prefix string) {
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
-		a.appendLog("[" + prefix + "] " + scanner.Text())
+		line := scanner.Text()
+		a.appendLog("[" + prefix + "] " + line)
+		if prefix == "hindsight" || prefix == "hindsight:error" {
+			a.observeHindsightSetupLog(line)
+		}
+	}
+}
+
+func (a *App) GetSetupStatus() SetupStatus {
+	a.setupMu.Lock()
+	defer a.setupMu.Unlock()
+	status := a.setupStatus
+	status.Steps = append([]SetupStep{}, status.Steps...)
+	return status
+}
+
+func (a *App) setupActive() bool {
+	a.setupMu.Lock()
+	defer a.setupMu.Unlock()
+	return a.setupStatus.Active
+}
+
+func (a *App) startSetup(title string, steps []SetupStep) {
+	a.setupMu.Lock()
+	defer a.setupMu.Unlock()
+	a.setupStatus = SetupStatus{Active: true, Title: title, Message: "Preparing local services", Steps: append([]SetupStep{}, steps...)}
+}
+
+func (a *App) finishSetup(message string) {
+	a.setupMu.Lock()
+	defer a.setupMu.Unlock()
+	if !a.setupStatus.Active {
+		return
+	}
+	for i := range a.setupStatus.Steps {
+		if a.setupStatus.Steps[i].State != "error" {
+			a.setupStatus.Steps[i].State = "complete"
+			a.setupStatus.Steps[i].Progress = 100
+		}
+	}
+	a.setupStatus.Message = message
+	a.setupStatus.Active = false
+}
+
+func (a *App) updateSetupStep(name, state string, progress int, detail string) {
+	a.setupMu.Lock()
+	defer a.setupMu.Unlock()
+	if !a.setupStatus.Active {
+		return
+	}
+	for i := range a.setupStatus.Steps {
+		if a.setupStatus.Steps[i].Name != name {
+			continue
+		}
+		a.setupStatus.Steps[i].State = state
+		a.setupStatus.Steps[i].Progress = max(0, min(100, progress))
+		a.setupStatus.Steps[i].Detail = detail
+		a.setupStatus.Message = detail
+		return
+	}
+}
+
+func (a *App) failSetup(name string, err error) {
+	a.updateSetupStep(name, "error", 100, err.Error())
+	a.setupMu.Lock()
+	defer a.setupMu.Unlock()
+	a.setupStatus.Message = err.Error()
+}
+
+func (a *App) observeHindsightSetupLog(line string) {
+	lower := strings.ToLower(line)
+	if strings.Contains(lower, "download") || strings.Contains(lower, "huggingface") || strings.Contains(lower, "sentence") || strings.Contains(lower, "transformer") {
+		a.updateSetupStep("Embedding model", "running", 75, "Downloading or loading model files")
 	}
 }
 
@@ -787,20 +993,18 @@ func (a *App) hindsightURL(cfg ManagerConfig) string {
 func (a *App) hindsightEnv(cfg ManagerConfig, key string) []string {
 	bridgeURL := fmt.Sprintf("http://%s:%s/v1", valueOr(cfg.Bridge.Host, defaultBridgeHost), valueOr(cfg.Bridge.Port, defaultBridgePort))
 	model := valueOr(cfg.Bridge.DefaultModel, "github-copilot/gpt-5.4-mini")
-	return []string{
+	return append(a.modelEnv(),
 		"PYTHONUTF8=1",
 		"PYTHONIOENCODING=utf-8",
-		"HF_HOME=" + filepath.Join(a.data, "cache", "huggingface"),
-		"SENTENCE_TRANSFORMERS_HOME=" + filepath.Join(a.data, "cache", "huggingface"),
 		"HINDSIGHT_API_DATABASE_URL=pg0://hindsight-local-manager",
 		"HINDSIGHT_API_LLM_PROVIDER=openai",
-		"HINDSIGHT_API_LLM_BASE_URL=" + bridgeURL,
-		"HINDSIGHT_API_LLM_API_KEY=" + key,
-		"HINDSIGHT_API_LLM_MODEL=" + model,
+		"HINDSIGHT_API_LLM_BASE_URL="+bridgeURL,
+		"HINDSIGHT_API_LLM_API_KEY="+key,
+		"HINDSIGHT_API_LLM_MODEL="+model,
 		"HINDSIGHT_API_EMBEDDINGS_PROVIDER=local",
-		"HINDSIGHT_API_HOST=" + valueOr(cfg.HindsightHost, defaultHindsightHost),
-		"HINDSIGHT_API_PORT=" + valueOr(cfg.HindsightPort, defaultHindsightPort),
-	}
+		"HINDSIGHT_API_HOST="+valueOr(cfg.HindsightHost, defaultHindsightHost),
+		"HINDSIGHT_API_PORT="+valueOr(cfg.HindsightPort, defaultHindsightPort),
+	)
 }
 
 func (a *App) hindsightCommand(cfg ManagerConfig) (string, []string, error) {

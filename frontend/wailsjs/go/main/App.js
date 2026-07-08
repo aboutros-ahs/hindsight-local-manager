@@ -26,6 +26,10 @@ export function GetAPIKey() {
   return window['go']['main']['App']['GetAPIKey']();
 }
 
+export function GetSetupStatus() {
+  return window['go']['main']['App']['GetSetupStatus']();
+}
+
 export function GetStatus() {
   return window['go']['main']['App']['GetStatus']();
 }

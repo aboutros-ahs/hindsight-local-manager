@@ -14,6 +14,8 @@ export function EnsureDefaultMemoryBank():Promise<void>;
 
 export function GetAPIKey():Promise<string>;
 
+export function GetSetupStatus():Promise<main.SetupStatus>;
+
 export function GetStatus():Promise<main.ManagerStatus>;
 
 export function GetUpdateStatus():Promise<main.UpdateStatus>;

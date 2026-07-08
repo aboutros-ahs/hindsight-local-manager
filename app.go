@@ -33,6 +33,7 @@ const (
 	defaultHindsightPort = "8888"
 	defaultUIPort        = "9999"
 	defaultBankID        = "default"
+	defaultUpdateRepo    = "aboutros-ahs/hindsight-local-manager"
 )
 
 var appVersion = appVersionFallback
@@ -850,7 +851,7 @@ func (a *App) controlPlaneCommandDescription() string {
 
 func withManagerDefaults(cfg ManagerConfig, data string) ManagerConfig {
 	cfg.Bridge = withBridgeDefaults(cfg.Bridge, data)
-	cfg.Update.GitHubRepo = strings.TrimSpace(cfg.Update.GitHubRepo)
+	cfg.Update.GitHubRepo = valueOr(cfg.Update.GitHubRepo, defaultUpdateRepo)
 	cfg.HindsightHost = valueOr(cfg.HindsightHost, defaultHindsightHost)
 	cfg.HindsightPort = valueOr(cfg.HindsightPort, defaultHindsightPort)
 	cfg.ControlPlanePort = valueOr(cfg.ControlPlanePort, defaultUIPort)

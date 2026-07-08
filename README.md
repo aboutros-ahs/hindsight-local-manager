@@ -25,6 +25,16 @@ wails dev
 wails build
 ```
 
+## Releases
+
+GitHub Releases publish:
+
+- a small installer that downloads the matching portable bundle and installs it under the user's profile
+- a full portable zip for offline/manual installs
+- the raw app exe for updater fallback
+
+The first installer run can take several minutes because it downloads Python, Node, Hindsight, UI packages, and local models. Future in-app updates download the full bundle only when a newer release is available.
+
 ## Packaging Direction
 
 `packaging\prepare-bundle.ps1` stages bundled Python, Node, Hindsight, and Control Plane resources for a smoother no-admin v1.

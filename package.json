@@ -1,0 +1,12 @@
+{
+  "name": "hindsight-local-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "No-admin Windows manager for local Hindsight with OpenCode/Copilot.",
+  "scripts": {
+    "ui:dev": "wails dev",
+    "ui:build": "wails build",
+    "frontend:build": "npm --prefix frontend run build"
+  }
+}

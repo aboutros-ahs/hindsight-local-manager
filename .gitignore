@@ -1,0 +1,23 @@
+node_modules/
+frontend/dist/*
+!frontend/dist/.gitkeep
+frontend/package.json.md5
+.env
+.DS_Store
+npm-debug.log*
+*.log
+.bridge-logs/
+.bridge-session-exports/
+.bridge-api-key
+.bridge-config.json
+.bridge-apps.json
+.bridge-sessions.json
+/build/
+/Hindsight Local Manager.exe
+/opencode-api-bridge.exe
+resources/python/
+resources/node/
+resources/control-plane/node_modules/
+resources/models/
+.bundle-cache/
+.wails/

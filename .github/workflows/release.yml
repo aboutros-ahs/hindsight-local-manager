@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag, for example v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Build Windows Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $version = '${{ github.event.inputs.version }}'
+          if (-not $version) { $version = '${{ github.ref_name }}' }
+          if ($version -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Version must look like v0.1.0. Got: $version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Wails
+        shell: pwsh
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: npm ci
+        working-directory: frontend
+
+      - name: Prepare bundled runtimes
+        shell: pwsh
+        run: .\packaging\prepare-bundle.ps1
+
+      - name: Build application
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'.TrimStart('v')
+          wails build -clean -nsis -ldflags "-X main.appVersion=$version"
+
+      - name: Package release assets
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $exe = 'build/bin/Hindsight Local Manager.exe'
+          if (!(Test-Path -LiteralPath $exe)) { throw "Missing executable: $exe" }
+          $installer = Get-ChildItem -LiteralPath 'build/bin' -Filter '*installer*.exe' | Select-Object -First 1
+          if (!$installer) { throw "Missing NSIS installer in build/bin" }
+          if (!(Test-Path -LiteralPath 'resources')) { throw "Missing bundled resources" }
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item -LiteralPath $exe -Destination 'dist/Hindsight Local Manager.exe' -Force
+          $installerAsset = "Hindsight-Local-Manager-$version-installer.exe"
+          Copy-Item -LiteralPath $installer.FullName -Destination "dist/$installerAsset" -Force
+          Copy-Item -LiteralPath resources -Destination dist/resources -Recurse
+          $zip = "Hindsight-Local-Manager-$version-windows-amd64.zip"
+          Compress-Archive -LiteralPath 'dist/Hindsight Local Manager.exe', 'dist/resources' -DestinationPath $zip -Force
+          "portable_asset=$zip" >> $env:GITHUB_OUTPUT
+          "exe_asset=dist/Hindsight Local Manager.exe" >> $env:GITHUB_OUTPUT
+          "installer_asset=dist/$installerAsset" >> $env:GITHUB_OUTPUT
+        id: package
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Hindsight Local Manager ${{ steps.version.outputs.version }}
+          files: |
+            ${{ steps.package.outputs.exe_asset }}
+            ${{ steps.package.outputs.installer_asset }}
+            ${{ steps.package.outputs.portable_asset }}
+          generate_release_notes: true

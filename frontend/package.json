@@ -1,0 +1,14 @@
+{
+  "name": "hindsight-local-manager-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "node ./scripts/clean-dist.mjs && vite build --emptyOutDir false",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^5.4.11"
+  }
+}

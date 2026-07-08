@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,8 +26,10 @@ type UpdateStatus struct {
 	Message         string `json:"message"`
 	Progress        int    `json:"progress"`
 	AssetName       string `json:"assetName"`
+	PackageType     string `json:"packageType"`
 	ReleaseURL      string `json:"releaseUrl"`
 	DownloadPath    string `json:"downloadPath"`
+	ExtractPath     string `json:"extractPath"`
 	TokenConfigured bool   `json:"tokenConfigured"`
 	assetAPIURL     string
 }
@@ -104,7 +107,7 @@ func (a *App) CheckForUpdate() (UpdateStatus, error) {
 	}
 	asset, ok := selectUpdaterAsset(release.Assets)
 	if !ok {
-		err := errors.New("latest release has no .exe asset for the updater")
+		err := errors.New("latest release has no portable .zip or .exe asset for the updater")
 		status := UpdateStatus{CurrentVersion: appVersion, LatestVersion: release.TagName, ReleaseURL: release.HTMLURL, State: "error", Message: err.Error()}
 		a.setUpdateStatus(status)
 		return a.GetUpdateStatus(), err
@@ -124,6 +127,7 @@ func (a *App) CheckForUpdate() (UpdateStatus, error) {
 		Message:        message,
 		Progress:       0,
 		AssetName:      asset.Name,
+		PackageType:    updatePackageType(asset.Name),
 		ReleaseURL:     release.HTMLURL,
 		assetAPIURL:    asset.URL,
 	}
@@ -145,6 +149,7 @@ func (a *App) DownloadUpdate() (UpdateStatus, error) {
 	status.Message = "Downloading update..."
 	status.Progress = 0
 	status.DownloadPath = ""
+	status.ExtractPath = ""
 	a.setUpdateStatus(status)
 	go a.downloadUpdateAsset(status)
 	return a.GetUpdateStatus(), nil
@@ -155,23 +160,42 @@ func (a *App) InstallDownloadedUpdate() error {
 	if status.State != "downloaded" || strings.TrimSpace(status.DownloadPath) == "" {
 		return errors.New("download an update before installing")
 	}
-	if !strings.EqualFold(filepath.Ext(status.DownloadPath), ".exe") {
-		return errors.New("downloaded update is not an executable")
+	if !strings.EqualFold(filepath.Ext(status.DownloadPath), ".exe") && !strings.EqualFold(filepath.Ext(status.DownloadPath), ".zip") {
+		return errors.New("downloaded update is not an executable or portable bundle")
 	}
 	currentExe, err := os.Executable()
 	if err != nil {
 		return err
 	}
+	sourceExe := status.DownloadPath
+	sourceResources := ""
+	if strings.EqualFold(filepath.Ext(status.DownloadPath), ".zip") {
+		if strings.TrimSpace(status.ExtractPath) == "" {
+			return errors.New("downloaded bundle was not extracted")
+		}
+		var err error
+		sourceExe, sourceResources, err = findBundlePayload(status.ExtractPath)
+		if err != nil {
+			return err
+		}
+	}
+	targetResources := filepath.Join(filepath.Dir(currentExe), "resources")
 	scriptPath := filepath.Join(a.data, "updates", "apply-update.ps1")
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $pidToWait = %d
 $source = '%s'
 $target = '%s'
+$sourceResources = '%s'
+$targetResources = '%s'
 while (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 300 }
 Copy-Item -LiteralPath $source -Destination $target -Force
+if ($sourceResources -and (Test-Path -LiteralPath $sourceResources)) {
+  if (Test-Path -LiteralPath $targetResources) { Remove-Item -LiteralPath $targetResources -Recurse -Force }
+  Copy-Item -LiteralPath $sourceResources -Destination $targetResources -Recurse -Force
+}
 Start-Process -FilePath $target
 Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
-`, os.Getpid(), psSingleQuote(status.DownloadPath), psSingleQuote(currentExe))
+`, os.Getpid(), psSingleQuote(sourceExe), psSingleQuote(currentExe), psSingleQuote(sourceResources), psSingleQuote(targetResources))
 	if err := os.MkdirAll(filepath.Dir(scriptPath), 0700); err != nil {
 		return err
 	}
@@ -183,6 +207,7 @@ Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	_ = a.StopAll()
 	a.forceQuit = true
 	wailsRuntime.Quit(a.ctx)
 	return nil
@@ -283,6 +308,19 @@ func (a *App) downloadUpdateAsset(status UpdateStatus) {
 	status.Message = "Update downloaded. Restart to install."
 	status.Progress = 100
 	status.DownloadPath = path
+	if strings.EqualFold(filepath.Ext(path), ".zip") {
+		extractPath, err := extractUpdateBundle(path, filepath.Join(filepath.Dir(path), "extracted"))
+		if err != nil {
+			a.setUpdateError(err)
+			return
+		}
+		if _, _, err := findBundlePayload(extractPath); err != nil {
+			a.setUpdateError(err)
+			return
+		}
+		status.ExtractPath = extractPath
+		status.Message = "Bundle downloaded. Restart to install app and resources."
+	}
 	a.setUpdateStatus(status)
 	a.appendLog("update downloaded: " + path)
 }
@@ -343,6 +381,17 @@ func validGitHubRepo(repo string) bool {
 
 func selectUpdaterAsset(assets []githubAsset) (githubAsset, bool) {
 	for _, asset := range assets {
+		name := strings.ToLower(asset.Name)
+		if strings.HasSuffix(name, "windows-amd64.zip") && strings.Contains(name, "hindsight-local-manager") {
+			return asset, true
+		}
+	}
+	for _, asset := range assets {
+		if strings.EqualFold(filepath.Ext(asset.Name), ".zip") && strings.Contains(strings.ToLower(asset.Name), "hindsight-local-manager") {
+			return asset, true
+		}
+	}
+	for _, asset := range assets {
 		if strings.EqualFold(asset.Name, "Hindsight Local Manager.exe") {
 			return asset, true
 		}
@@ -353,6 +402,90 @@ func selectUpdaterAsset(assets []githubAsset) (githubAsset, bool) {
 		}
 	}
 	return githubAsset{}, false
+}
+
+func updatePackageType(name string) string {
+	if strings.EqualFold(filepath.Ext(name), ".zip") {
+		return "bundle"
+	}
+	return "exe"
+}
+
+func extractUpdateBundle(zipPath, destination string) (string, error) {
+	_ = os.RemoveAll(destination)
+	reader, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return "", err
+	}
+	defer reader.Close()
+	if err := os.MkdirAll(destination, 0700); err != nil {
+		return "", err
+	}
+	root, err := filepath.Abs(destination)
+	if err != nil {
+		return "", err
+	}
+	for _, file := range reader.File {
+		target := filepath.Join(root, filepath.Clean(file.Name))
+		if !strings.HasPrefix(target, root+string(os.PathSeparator)) && target != root {
+			return "", fmt.Errorf("unsafe bundle path: %s", file.Name)
+		}
+		if file.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0700); err != nil {
+				return "", err
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+			return "", err
+		}
+		source, err := file.Open()
+		if err != nil {
+			return "", err
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, file.Mode())
+		if err != nil {
+			source.Close()
+			return "", err
+		}
+		_, copyErr := io.Copy(out, source)
+		closeErr := out.Close()
+		source.Close()
+		if copyErr != nil {
+			return "", copyErr
+		}
+		if closeErr != nil {
+			return "", closeErr
+		}
+	}
+	return root, nil
+}
+
+func findBundlePayload(root string) (string, string, error) {
+	var exePath string
+	var resourcesPath string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if exePath == "" && !entry.IsDir() && strings.EqualFold(entry.Name(), "Hindsight Local Manager.exe") {
+			exePath = path
+		}
+		if resourcesPath == "" && entry.IsDir() && strings.EqualFold(entry.Name(), "resources") {
+			resourcesPath = path
+		}
+		return nil
+	})
+	if err != nil {
+		return "", "", err
+	}
+	if exePath == "" {
+		return "", "", errors.New("portable update bundle did not contain Hindsight Local Manager.exe")
+	}
+	if resourcesPath == "" {
+		return "", "", errors.New("portable update bundle did not contain resources")
+	}
+	return exePath, resourcesPath, nil
 }
 
 func versionGreater(latest, current string) bool {

@@ -126,8 +126,10 @@ export namespace main {
 	    message: string;
 	    progress: number;
 	    assetName: string;
+	    packageType: string;
 	    releaseUrl: string;
 	    downloadPath: string;
+	    extractPath: string;
 	    tokenConfigured: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -143,8 +145,10 @@ export namespace main {
 	        this.message = source["message"];
 	        this.progress = source["progress"];
 	        this.assetName = source["assetName"];
+	        this.packageType = source["packageType"];
 	        this.releaseUrl = source["releaseUrl"];
 	        this.downloadPath = source["downloadPath"];
+	        this.extractPath = source["extractPath"];
 	        this.tokenConfigured = source["tokenConfigured"];
 	    }
 	}

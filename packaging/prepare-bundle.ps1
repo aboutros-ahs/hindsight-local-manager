@@ -1,11 +1,11 @@
-$ErrorActionPreference = "Stop"
-
 param(
   [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
   [string]$PythonVersion = "3.11.9",
   [string]$NodeVersion = "22.13.1",
   [switch]$SkipDownloads
 )
+
+$ErrorActionPreference = "Stop"
 
 $resources = Join-Path $Root "resources"
 $cache = Join-Path $Root ".bundle-cache"

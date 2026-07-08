@@ -70,29 +70,27 @@ jobs:
         shell: pwsh
         run: |
           $version = '${{ steps.version.outputs.version }}'.TrimStart('v')
-          wails build -clean -ldflags "-X main.appVersion=$version"
+          wails build -clean -nsis -ldflags "-X main.appVersion=$version"
 
       - name: Package release assets
         shell: pwsh
         run: |
           $version = '${{ steps.version.outputs.version }}'
-          $versionNumber = $version.TrimStart('v')
           $exe = 'build/bin/Hindsight Local Manager.exe'
           if (!(Test-Path -LiteralPath $exe)) { throw "Missing executable: $exe" }
+          $installer = Get-ChildItem -LiteralPath 'build/bin' -Filter '*installer*.exe' | Select-Object -First 1
+          if (!$installer) { throw "Missing NSIS installer in build/bin" }
           if (!(Test-Path -LiteralPath 'resources')) { throw "Missing bundled resources" }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item -LiteralPath $exe -Destination 'dist/Hindsight Local Manager.exe' -Force
-          Copy-Item -LiteralPath resources -Destination dist/resources -Recurse
-
           $installerAsset = "Hindsight-Local-Manager-$version-installer.exe"
-          & makensis /DAPP_VERSION=$versionNumber /DSOURCE_DIR="$((Resolve-Path 'dist').Path)" /DOUT_FILE="$((Join-Path (Get-Location) $installerAsset))" packaging\installer.nsi
-          if (!(Test-Path -LiteralPath $installerAsset)) { throw "Missing installer: $installerAsset" }
-
+          Copy-Item -LiteralPath $installer.FullName -Destination "dist/$installerAsset" -Force
+          Copy-Item -LiteralPath resources -Destination dist/resources -Recurse
           $zip = "Hindsight-Local-Manager-$version-windows-amd64.zip"
           Compress-Archive -LiteralPath 'dist/Hindsight Local Manager.exe', 'dist/resources' -DestinationPath $zip -Force
           "portable_asset=$zip" >> $env:GITHUB_OUTPUT
           "exe_asset=dist/Hindsight Local Manager.exe" >> $env:GITHUB_OUTPUT
-          "installer_asset=$installerAsset" >> $env:GITHUB_OUTPUT
+          "installer_asset=dist/$installerAsset" >> $env:GITHUB_OUTPUT
         id: package
 
       - name: Publish GitHub release

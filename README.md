@@ -29,9 +29,9 @@ wails build
 
 GitHub Releases publish:
 
-- a small installer that downloads the matching portable bundle and installs it under the user's profile
+- a small installer that downloads split runtime components and installs them under the user's profile
 - split runtime component archives used by the installer for per-component download progress
-- a full portable zip for offline/manual installs
+- split runtime component archives for manual/offline installs
 - the raw app exe for updater fallback
 
 The first installer run can take several minutes because it downloads Python, Node, Hindsight, and UI packages. The installer logs progress for each component. Future in-app updates prefer the app-only archive so runtime dependencies are not redownloaded unless the installer/runtime assets are used again.

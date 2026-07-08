@@ -83,9 +83,6 @@ jobs:
           if (Test-Path -LiteralPath 'resources/models') { Remove-Item -LiteralPath 'resources/models' -Recurse -Force }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item -LiteralPath $exe -Destination 'dist/Hindsight Local Manager.exe' -Force
-          Copy-Item -LiteralPath resources -Destination dist/resources -Recurse
-          $zip = "Hindsight-Local-Manager-$version-windows-amd64.zip"
-          Compress-Archive -LiteralPath 'dist/Hindsight Local Manager.exe', 'dist/resources' -DestinationPath $zip -Force
 
           New-Item -ItemType Directory -Path 'components/app', 'components/python/resources', 'components/node/resources', 'components/control-plane/resources' -Force | Out-Null
           Copy-Item -LiteralPath $exe -Destination 'components/app/Hindsight Local Manager.exe' -Force
@@ -106,7 +103,6 @@ jobs:
           & makensis /DAPP_VERSION=$versionNumber /DASSET_BASE_URL=$assetBaseUrl /DOUT_FILE="$((Join-Path (Get-Location) $installerAsset))" packaging\web-installer.nsi
           if (!(Test-Path -LiteralPath $installerAsset)) { throw "Missing installer: $installerAsset" }
 
-          "portable_asset=$zip" >> $env:GITHUB_OUTPUT
           "exe_asset=dist/Hindsight Local Manager.exe" >> $env:GITHUB_OUTPUT
           "installer_asset=$installerAsset" >> $env:GITHUB_OUTPUT
           "app_asset=$appAsset" >> $env:GITHUB_OUTPUT
@@ -123,7 +119,6 @@ jobs:
           files: |
             ${{ steps.package.outputs.exe_asset }}
             ${{ steps.package.outputs.installer_asset }}
-            ${{ steps.package.outputs.portable_asset }}
             ${{ steps.package.outputs.app_asset }}
             ${{ steps.package.outputs.python_asset }}
             ${{ steps.package.outputs.node_asset }}

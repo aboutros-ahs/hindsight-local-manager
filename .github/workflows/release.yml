@@ -87,14 +87,32 @@ jobs:
           $zip = "Hindsight-Local-Manager-$version-windows-amd64.zip"
           Compress-Archive -LiteralPath 'dist/Hindsight Local Manager.exe', 'dist/resources' -DestinationPath $zip -Force
 
+          New-Item -ItemType Directory -Path 'components/app', 'components/python/resources', 'components/node/resources', 'components/control-plane/resources' -Force | Out-Null
+          Copy-Item -LiteralPath $exe -Destination 'components/app/Hindsight Local Manager.exe' -Force
+          Copy-Item -LiteralPath 'resources/python' -Destination 'components/python/resources/python' -Recurse
+          Copy-Item -LiteralPath 'resources/node' -Destination 'components/node/resources/node' -Recurse
+          Copy-Item -LiteralPath 'resources/control-plane' -Destination 'components/control-plane/resources/control-plane' -Recurse
+          $appAsset = "Hindsight-Local-Manager-$version-app.zip"
+          $pythonAsset = "Hindsight-Local-Manager-$version-python.zip"
+          $nodeAsset = "Hindsight-Local-Manager-$version-node.zip"
+          $controlPlaneAsset = "Hindsight-Local-Manager-$version-control-plane.zip"
+          Compress-Archive -LiteralPath 'components/app/Hindsight Local Manager.exe' -DestinationPath $appAsset -Force
+          Compress-Archive -LiteralPath 'components/python/resources' -DestinationPath $pythonAsset -Force
+          Compress-Archive -LiteralPath 'components/node/resources' -DestinationPath $nodeAsset -Force
+          Compress-Archive -LiteralPath 'components/control-plane/resources' -DestinationPath $controlPlaneAsset -Force
+
           $installerAsset = "Hindsight-Local-Manager-$version-installer.exe"
-          $bundleUrl = "https://github.com/${{ github.repository }}/releases/download/$version/$zip"
-          & makensis /DAPP_VERSION=$versionNumber /DBUNDLE_URL=$bundleUrl /DOUT_FILE="$((Join-Path (Get-Location) $installerAsset))" packaging\web-installer.nsi
+          $assetBaseUrl = "https://github.com/${{ github.repository }}/releases/download/$version"
+          & makensis /DAPP_VERSION=$versionNumber /DASSET_BASE_URL=$assetBaseUrl /DOUT_FILE="$((Join-Path (Get-Location) $installerAsset))" packaging\web-installer.nsi
           if (!(Test-Path -LiteralPath $installerAsset)) { throw "Missing installer: $installerAsset" }
 
           "portable_asset=$zip" >> $env:GITHUB_OUTPUT
           "exe_asset=dist/Hindsight Local Manager.exe" >> $env:GITHUB_OUTPUT
           "installer_asset=$installerAsset" >> $env:GITHUB_OUTPUT
+          "app_asset=$appAsset" >> $env:GITHUB_OUTPUT
+          "python_asset=$pythonAsset" >> $env:GITHUB_OUTPUT
+          "node_asset=$nodeAsset" >> $env:GITHUB_OUTPUT
+          "control_plane_asset=$controlPlaneAsset" >> $env:GITHUB_OUTPUT
         id: package
 
       - name: Publish GitHub release
@@ -106,5 +124,9 @@ jobs:
             ${{ steps.package.outputs.exe_asset }}
             ${{ steps.package.outputs.installer_asset }}
             ${{ steps.package.outputs.portable_asset }}
+            ${{ steps.package.outputs.app_asset }}
+            ${{ steps.package.outputs.python_asset }}
+            ${{ steps.package.outputs.node_asset }}
+            ${{ steps.package.outputs.control_plane_asset }}
           generate_release_notes: true
           overwrite_files: true

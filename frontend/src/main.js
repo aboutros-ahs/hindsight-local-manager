@@ -166,8 +166,8 @@ function runtimePage(s, cfg, hindsightRunning, uiRunning) {
   const apiHealthy = Boolean(s.hindsight?.healthy);
   const uiStartDisabled = !apiHealthy && !uiRunning ? ' disabled title="Start Hindsight API first"' : '';
   const services = [
-    ['api', 'Hindsight API', s.hindsight, `<button data-action="toggle-hindsight">${hindsightRunning ? 'STOP' : 'START'}</button>`],
-    ['ui', 'Hindsight UI', s.controlPlane, `<button data-action="toggle-ui"${uiRunning ? '' : uiStartDisabled}>${uiRunning ? 'STOP' : 'START'}</button><button data-action="open-ui">OPEN UI</button>`],
+    ['api', 'Hindsight API', s.hindsight, `<button data-action="toggle-hindsight">${hindsightRunning ? 'STOP HINDSIGHT' : 'START HINDSIGHT'}</button>`],
+    ['ui', 'Hindsight UI', s.controlPlane, `<button data-action="toggle-ui"${uiRunning ? '' : uiStartDisabled}>${uiRunning ? 'STOP HINDSIGHT UI' : 'START HINDSIGHT UI'}</button><button data-action="open-ui">OPEN UI</button>`],
   ];
   return `
     <section class="panel hero-panel">
@@ -502,12 +502,12 @@ function escapeAttr(value) {
   return escapeHtml(value).replace(/`/g, '&#096;');
 }
 
-function errorMessage(error) {
-  return typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
+function serviceText(value) {
+  return String(value || '').replace(/no_admin_no_docker/gi, 'Hindsight UI');
 }
 
-function serviceText(value) {
-  return value;
+function errorMessage(error) {
+  return typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
 }
 
 refresh();

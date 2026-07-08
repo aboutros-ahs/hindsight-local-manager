@@ -174,7 +174,7 @@ func (a *App) InstallDownloadedUpdate() error {
 			return errors.New("downloaded bundle was not extracted")
 		}
 		var err error
-		sourceExe, sourceResources, err = findBundlePayload(status.ExtractPath)
+		sourceExe, sourceResources, err = findUpdatePayload(status.ExtractPath)
 		if err != nil {
 			return err
 		}
@@ -314,12 +314,16 @@ func (a *App) downloadUpdateAsset(status UpdateStatus) {
 			a.setUpdateError(err)
 			return
 		}
-		if _, _, err := findBundlePayload(extractPath); err != nil {
+		if _, _, err := findUpdatePayload(extractPath); err != nil {
 			a.setUpdateError(err)
 			return
 		}
 		status.ExtractPath = extractPath
-		status.Message = "Bundle downloaded. Restart to install app and resources."
+		if _, resourcesPath, _ := findUpdatePayload(extractPath); resourcesPath != "" {
+			status.Message = "Bundle downloaded. Restart to install app and resources."
+		} else {
+			status.Message = "App update downloaded. Restart to install."
+		}
 	}
 	a.setUpdateStatus(status)
 	a.appendLog("update downloaded: " + path)
@@ -380,6 +384,12 @@ func validGitHubRepo(repo string) bool {
 }
 
 func selectUpdaterAsset(assets []githubAsset) (githubAsset, bool) {
+	for _, asset := range assets {
+		name := strings.ToLower(asset.Name)
+		if strings.HasSuffix(name, "-app.zip") && strings.Contains(name, "hindsight-local-manager") {
+			return asset, true
+		}
+	}
 	for _, asset := range assets {
 		name := strings.ToLower(asset.Name)
 		if strings.HasSuffix(name, "windows-amd64.zip") && strings.Contains(name, "hindsight-local-manager") {
@@ -461,7 +471,7 @@ func extractUpdateBundle(zipPath, destination string) (string, error) {
 	return root, nil
 }
 
-func findBundlePayload(root string) (string, string, error) {
+func findUpdatePayload(root string) (string, string, error) {
 	var exePath string
 	var resourcesPath string
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
@@ -480,10 +490,7 @@ func findBundlePayload(root string) (string, string, error) {
 		return "", "", err
 	}
 	if exePath == "" {
-		return "", "", errors.New("portable update bundle did not contain Hindsight Local Manager.exe")
-	}
-	if resourcesPath == "" {
-		return "", "", errors.New("portable update bundle did not contain resources")
+		return "", "", errors.New("update bundle did not contain Hindsight Local Manager.exe")
 	}
 	return exePath, resourcesPath, nil
 }

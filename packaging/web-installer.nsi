@@ -7,6 +7,9 @@ Unicode true
 !ifndef BUNDLE_URL
   !define BUNDLE_URL "https://github.com/aboutros-ahs/hindsight-local-manager/releases/latest"
 !endif
+!ifndef ASSET_BASE_URL
+  !define ASSET_BASE_URL "https://github.com/aboutros-ahs/hindsight-local-manager/releases/latest/download"
+!endif
 !ifndef OUT_FILE
   !define OUT_FILE "Hindsight-Local-Manager-installer.exe"
 !endif
@@ -28,8 +31,10 @@ VIAddVersionKey "ProductVersion" "${APP_VERSION}"
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  DetailPrint "Downloading Hindsight Local Manager bundle..."
-  nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$$ErrorActionPreference = 'Stop'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $$zip = Join-Path $$env:TEMP 'Hindsight-Local-Manager-${APP_VERSION}-windows-amd64.zip'; $$dest = '$INSTDIR'; New-Item -ItemType Directory -Path $$dest -Force | Out-Null; Invoke-WebRequest -Uri '${BUNDLE_URL}' -OutFile $$zip; Get-ChildItem -LiteralPath $$dest -Force | Where-Object { $$_.Name -ne 'Uninstall.exe' } | Remove-Item -Recurse -Force; Expand-Archive -LiteralPath $$zip -DestinationPath $$dest -Force; Remove-Item -LiteralPath $$zip -Force"`
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\web-install.ps1 "packaging\web-install.ps1"
+  DetailPrint "Downloading Hindsight Local Manager components..."
+  nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\web-install.ps1" -InstallDir "$INSTDIR" -Version "${APP_VERSION}" -BaseUrl "${ASSET_BASE_URL}"`
   Pop $0
   ${If} $0 != 0
     Abort "Bundle download or extraction failed. Check your internet connection and try again."

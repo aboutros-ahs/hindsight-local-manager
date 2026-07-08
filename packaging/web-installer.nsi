@@ -29,7 +29,7 @@ VIAddVersionKey "ProductVersion" "${APP_VERSION}"
 Section "Install"
   SetOutPath "$INSTDIR"
   DetailPrint "Downloading Hindsight Local Manager bundle..."
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = ''Stop''; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $zip = Join-Path $env:TEMP ''Hindsight-Local-Manager-${APP_VERSION}-windows-amd64.zip''; $dest = ''$INSTDIR''; New-Item -ItemType Directory -Path $dest -Force | Out-Null; Invoke-WebRequest -Uri ''${BUNDLE_URL}'' -OutFile $zip; Get-ChildItem -LiteralPath $dest -Force | Where-Object { $_.Name -ne ''Uninstall.exe'' } | Remove-Item -Recurse -Force; Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force; Remove-Item -LiteralPath $zip -Force"'
+  nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$$ErrorActionPreference = 'Stop'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $$zip = Join-Path $$env:TEMP 'Hindsight-Local-Manager-${APP_VERSION}-windows-amd64.zip'; $$dest = '$INSTDIR'; New-Item -ItemType Directory -Path $$dest -Force | Out-Null; Invoke-WebRequest -Uri '${BUNDLE_URL}' -OutFile $$zip; Get-ChildItem -LiteralPath $$dest -Force | Where-Object { $$_.Name -ne 'Uninstall.exe' } | Remove-Item -Recurse -Force; Expand-Archive -LiteralPath $$zip -DestinationPath $$dest -Force; Remove-Item -LiteralPath $$zip -Force"`
   Pop $0
   ${If} $0 != 0
     Abort "Bundle download or extraction failed. Check your internet connection and try again."

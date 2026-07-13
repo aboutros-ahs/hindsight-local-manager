@@ -59,7 +59,15 @@ $getPip = Join-Path $cache "get-pip.py"
 Download-File "https://bootstrap.pypa.io/get-pip.py" $getPip
 & (Join-Path $pythonDir "python.exe") $getPip
 & (Join-Path $pythonDir "python.exe") -m pip install --upgrade pip
-& (Join-Path $pythonDir "python.exe") -m pip install hindsight-api
+$sitePackages = Join-Path $pythonDir "Lib\site-packages"
+New-Item -ItemType Directory -Path $sitePackages -Force | Out-Null
+& (Join-Path $pythonDir "python.exe") -m pip install --upgrade --target $sitePackages --no-warn-script-location hindsight-api sentence-transformers
+& (Join-Path $pythonDir "python.exe") -c "import hindsight_api, sentence_transformers; print('Python runtime imports OK')"
+
+Get-ChildItem -LiteralPath $pythonDir -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem -LiteralPath $pythonDir -Recurse -Directory | Where-Object { $_.Name -in @("tests", "test") } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem -LiteralPath $pythonDir -Recurse -Include "*.pyc", "*.pyo" | Remove-Item -Force -ErrorAction SilentlyContinue
+& (Join-Path $pythonDir "python.exe") -m pip cache purge
 
 Push-Location $controlPlaneDir
 try {

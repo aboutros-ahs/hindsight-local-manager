@@ -1,5 +1,5 @@
 export namespace main {
-	
+
 	export class BridgeConfig {
 	    host: string;
 	    port: string;
@@ -15,11 +15,11 @@ export namespace main {
 	    openCodeServerUrl: string;
 	    openCodeAgent: string;
 	    openCodeTools: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new BridgeConfig(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.host = source["host"];
@@ -42,11 +42,11 @@ export namespace main {
 	    installed: boolean;
 	    path: string;
 	    detail: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new IntegrationStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.installed = source["installed"];
@@ -123,11 +123,11 @@ export namespace main {
 	    state: string;
 	    progress: number;
 	    detail: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SetupStep(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -154,6 +154,66 @@ export namespace main {
 	        this.steps = this.convertValues(source["steps"], SetupStep);
 	    }
 	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RuntimeComponentStatus {
+	    installed: boolean;
+	    source: string;
+	    path: string;
+	    version: string;
+	    detail: string;
+
+	    static createFrom(source: any = {}) {
+	        return new RuntimeComponentStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.installed = source["installed"];
+	        this.source = source["source"];
+	        this.path = source["path"];
+	        this.version = source["version"];
+	        this.detail = source["detail"];
+	    }
+	}
+	export class RuntimeInstallStatus {
+	    resourcesRoot: string;
+	    version: string;
+	    python: RuntimeComponentStatus;
+	    node: RuntimeComponentStatus;
+	    controlPlane: RuntimeComponentStatus;
+	    reranker: RuntimeComponentStatus;
+
+	    static createFrom(source: any = {}) {
+	        return new RuntimeInstallStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.resourcesRoot = source["resourcesRoot"];
+	        this.version = source["version"];
+	        this.python = this.convertValues(source["python"], RuntimeComponentStatus);
+	        this.node = this.convertValues(source["node"], RuntimeComponentStatus);
+	        this.controlPlane = this.convertValues(source["controlPlane"], RuntimeComponentStatus);
+	        this.reranker = this.convertValues(source["reranker"], RuntimeComponentStatus);
+	    }
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -240,6 +300,7 @@ export namespace main {
 	    paths: Record<string, string>;
 	    version: string;
 	    update: UpdateStatus;
+	    runtime: RuntimeInstallStatus;
 	    setup: SetupStatus;
 	    lastUpdated: string;
 	
@@ -264,6 +325,7 @@ export namespace main {
 	        this.paths = source["paths"];
 	        this.version = source["version"];
 	        this.update = this.convertValues(source["update"], UpdateStatus);
+	        this.runtime = this.convertValues(source["runtime"], RuntimeInstallStatus);
 	        this.setup = this.convertValues(source["setup"], SetupStatus);
 	        this.lastUpdated = source["lastUpdated"];
 	    }
@@ -300,9 +362,11 @@ export namespace main {
 	        this.path = source["path"];
 	    }
 	}
-	
-	
-	
+
+
+
+
+
 	export class TrayManager {
 	
 	
@@ -318,4 +382,3 @@ export namespace main {
 	
 
 }
-

@@ -92,13 +92,21 @@ Remove-Item -LiteralPath (Join-Path $InstallDir "resources\control-plane") -Recu
 $uiEnabled = Is-Truthy $IncludeUI
 $pythonExe = ""
 $nodeExe = ""
+$pythonSource = "managed"
+$nodeSource = "managed"
 if ($PythonMode -eq "auto") {
   $pythonExe = Find-CompatiblePython
-  if ($pythonExe) { Write-Output "[Python runtime] Using compatible system Python: $pythonExe" }
+  if ($pythonExe) {
+    $pythonSource = "system"
+    Write-Output "[Python runtime] Using compatible system Python: $pythonExe"
+  }
 }
 if ($uiEnabled -and $NodeMode -eq "auto") {
   $nodeExe = Find-CompatibleNode
-  if ($nodeExe) { Write-Output "[Node runtime] Using compatible system Node: $nodeExe" }
+  if ($nodeExe) {
+    $nodeSource = "system"
+    Write-Output "[Node runtime] Using compatible system Node: $nodeExe"
+  }
 }
 
 $components = @(@{ Name = "App"; Version = $appTag; BaseUrl = $AppBaseUrl; Asset = "Hindsight-Local-Manager-$appTag-app.zip"; Marker = ".app-version"; Destination = $InstallDir; MarkerRoot = $InstallDir })
@@ -233,9 +241,12 @@ Set-Content -LiteralPath (Join-Path $InstallDir ".runtime-root") -Value $runtime
 $runtimeConfig = @{
   resourcesRoot = $runtimeResourcesRoot
   pythonExe = $pythonExe
+  pythonSource = $pythonSource
   nodeExe = $nodeExe
+  nodeSource = $(if ($uiEnabled) { $nodeSource } else { "not required" })
   controlPlaneCli = $controlPlaneCli
   uiInstalled = $uiEnabled
+  runtimeVersion = $runtimeTag
 }
 $runtimeConfig | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $InstallDir ".runtime-config.json") -Encoding ASCII
 Remove-Item -LiteralPath $cache -Recurse -Force -ErrorAction SilentlyContinue

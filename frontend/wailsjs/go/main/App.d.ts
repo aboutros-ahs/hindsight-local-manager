@@ -28,6 +28,8 @@ export function InstallCodexHooks():Promise<void>;
 
 export function InstallDownloadedUpdate():Promise<void>;
 
+export function InstallHindsightUI():Promise<void>;
+
 export function InstallOpenCodeMCP():Promise<void>;
 
 export function InstallOpenCodeMCPAt(arg1:string):Promise<void>;

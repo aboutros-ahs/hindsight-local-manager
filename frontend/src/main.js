@@ -18,6 +18,7 @@ import {
   InstallOpenCodeMCP,
   InstallOpenCodeMCPAt,
   InstallCodexHooks,
+  InstallHindsightUI,
   SaveUpdateSettings,
   ClearUpdateToken,
   CheckForUpdate,
@@ -61,6 +62,8 @@ function render() {
   }
   const s = state.status || {};
   const cfg = state.config || s.config || {};
+  const runtime = s.runtime || {};
+  const uiInstalled = Boolean(runtime.controlPlane?.installed);
   const hindsightRunning = Boolean(s.hindsight?.running || s.hindsight?.healthy);
   const uiRunning = Boolean(s.controlPlane?.running || s.controlPlane?.healthy);
   const logText = escapeHtml((s.logTail || []).join('\n') || 'NO_LOGS');
@@ -74,7 +77,7 @@ function render() {
         <div class="top-actions">
           <div class="status-cluster">
             ${pill('API', s.hindsight?.healthy)}
-            ${pill('UI', s.controlPlane?.healthy)}
+            ${uiInstalled ? pill('UI', s.controlPlane?.healthy) : ''}
             <button class="pill-button" data-action="hide-to-tray">HIDE TO TRAY</button>
             <button class="pill-button" data-action="quit-app">QUIT APP</button>
           </div>
@@ -176,13 +179,14 @@ function toolsPage(s, cfg) {
 
 function runtimePage(s, cfg, hindsightRunning, uiRunning, logText) {
   const apiHealthy = Boolean(s.hindsight?.healthy);
-  const uiInstalled = s.controlPlane?.detail !== 'not installed';
+  const uiInstalled = Boolean(s.runtime?.controlPlane?.installed);
   const uiStartDisabled = !apiHealthy && !uiRunning ? ' disabled title="Start Hindsight API first"' : '';
-  const uiDisabled = uiInstalled ? uiStartDisabled : ' disabled title="Hindsight UI was not selected during installation"';
   const services = [
     ['api', 'Hindsight API', s.hindsight, `<button data-action="toggle-hindsight">${hindsightRunning ? 'STOP HINDSIGHT' : 'START HINDSIGHT'}</button>`],
-    ['ui', 'Hindsight UI', s.controlPlane, `<button data-action="toggle-ui"${uiRunning ? '' : uiDisabled}>${uiRunning ? 'STOP HINDSIGHT UI' : 'START HINDSIGHT UI'}</button><button data-action="open-ui"${uiInstalled ? '' : ' disabled'}>OPEN UI</button>`],
   ];
+  if (uiInstalled) {
+    services.push(['ui', 'Hindsight UI', s.controlPlane, `<button data-action="toggle-ui"${uiRunning ? '' : uiStartDisabled}>${uiRunning ? 'STOP HINDSIGHT UI' : 'START HINDSIGHT UI'}</button><button data-action="open-ui">OPEN UI</button>`]);
+  }
   return `
     <section class="panel hero-panel">
       <div class="panel-head">
@@ -210,13 +214,13 @@ function runtimePage(s, cfg, hindsightRunning, uiRunning, logText) {
       <div class="panel-head"><p class="overline">SETTINGS</p><h2>Launch Behavior</h2></div>
       <div class="check-grid">
         ${checkbox('startServicesOnLaunch', 'START SERVICES ON APP LAUNCH', cfg.startServicesOnLaunch)}
-        ${checkbox('startUiOnLaunch', 'START HINDSIGHT UI ON APP LAUNCH', cfg.startUiOnLaunch)}
-        ${checkbox('openUiBrowserOnLaunch', 'OPEN UI IN BROWSER', cfg.openUiBrowserOnLaunch)}
+        ${uiInstalled ? checkbox('startUiOnLaunch', 'START HINDSIGHT UI ON APP LAUNCH', cfg.startUiOnLaunch) : ''}
+        ${uiInstalled ? checkbox('openUiBrowserOnLaunch', 'OPEN UI IN BROWSER', cfg.openUiBrowserOnLaunch) : ''}
         ${checkbox('closeToTray', 'CLOSE WINDOW TO TRAY', cfg.bridge?.closeToTray)}
       </div>
       <div class="form-grid compact">
         ${input('hindsightPort', 'HINDSIGHT_PORT', cfg.hindsightPort || '8888')}
-        ${input('controlPlanePort', 'UI_PORT', cfg.controlPlanePort || '9999')}
+        ${uiInstalled ? input('controlPlanePort', 'UI_PORT', cfg.controlPlanePort || '9999') : ''}
       </div>
       <div class="actions">
         <button class="primary" data-action="save-config">SAVE SETTINGS</button>
@@ -230,6 +234,7 @@ function runtimePage(s, cfg, hindsightRunning, uiRunning, logText) {
 }
 
 function setupPage(s, cfg) {
+  const runtime = s.runtime || {};
   return `
     <section class="panel hero-panel">
       <div class="panel-head">
@@ -237,6 +242,10 @@ function setupPage(s, cfg) {
         <h2>Setup Checklist</h2>
       </div>
       <div class="service-grid">
+        ${runtimeComponentCard('Python Runtime', runtime.python, '')}
+        ${runtimeComponentCard('Hindsight UI', runtime.controlPlane, runtime.controlPlane?.installed ? '' : '<button data-action="install-ui">INSTALL UI</button>')}
+        ${runtime.controlPlane?.installed ? runtimeComponentCard('Node Runtime', runtime.node, '') : ''}
+        ${runtimeComponentCard('Local Reranker', runtime.reranker, '')}
         ${dependencyCard('OpenCode CLI', s.openCode?.healthy ? 'SESSION READY' : 'ON DEMAND', s.openCode?.url || 'http://127.0.0.1:4096', `Hidden bridge launches ${cfg.bridge?.openCodeBin || s.openCode?.detail || 'opencode'} when Hindsight needs Copilot.`)}
         ${dependencyCard('Default Memory Bank', s.hindsight?.healthy ? 'READY' : 'API OFF', 'bank: default', 'Created automatically after Hindsight API starts. Run manually if first-run setup was skipped.', `<button data-action="ensure-default-bank"${s.hindsight?.healthy ? '' : ' disabled title="Start Hindsight API first"'}>ENSURE BANK</button>`)}
         ${integrationCard('OpenCode Plugin', s.openCodePlugin, '<button data-action="install-opencode-plugin">INSTALL PLUGIN</button>')}
@@ -280,6 +289,20 @@ function integrationCard(name, item = {}, actions = '') {
     <div><strong>${escapeHtml(name)}</strong><span>${item.installed ? 'INSTALLED' : 'MISSING'}</span></div>
     <code>${escapeHtml(item.path || '')}</code>
     <p>${escapeHtml(item.detail || '')}</p>
+    ${actions ? `<div class="card-actions">${actions}</div>` : ''}
+  </div>`;
+}
+
+function runtimeComponentCard(name, item = {}, actions = '') {
+  const installed = Boolean(item.installed);
+  const status = installed ? (item.source || 'installed').toUpperCase() : (item.source === 'disabled' ? 'DISABLED' : 'NOT INSTALLED');
+  const tone = installed ? 'ok' : (item.source === 'disabled' ? 'warn' : 'bad');
+  const detail = item.detail || item.path || '';
+  const version = item.version ? ` (${item.version})` : '';
+  return `<div class="service-card ${tone}">
+    <div><strong>${escapeHtml(name)}</strong><span>${escapeHtml(status)}</span></div>
+    <code>${escapeHtml((item.path || item.source || '') + version)}</code>
+    <p>${escapeHtml(detail)}</p>
     ${actions ? `<div class="card-actions">${actions}</div>` : ''}
   </div>`;
 }
@@ -421,6 +444,7 @@ async function runAction(action, source) {
     if (action === 'quit-app') await QuitApp();
     if (action === 'install-opencode-plugin') await beginOpenCodeInstall('plugin');
     if (action === 'install-opencode-mcp') await beginOpenCodeInstall('mcp');
+    if (action === 'install-ui') await runWithSetupPolling(() => InstallHindsightUI());
     if (action === 'select-opencode-config') await finishOpenCodeInstall(source?.dataset.installKind, source?.dataset.configPath);
     if (action === 'cancel-opencode-config') state.openCodeInstall = null;
     if (action === 'install-codex') await InstallCodexHooks();

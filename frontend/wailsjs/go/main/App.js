@@ -54,6 +54,10 @@ export function InstallDownloadedUpdate() {
   return window['go']['main']['App']['InstallDownloadedUpdate']();
 }
 
+export function InstallHindsightUI() {
+  return window['go']['main']['App']['InstallHindsightUI']();
+}
+
 export function InstallOpenCodeMCP() {
   return window['go']['main']['App']['InstallOpenCodeMCP']();
 }

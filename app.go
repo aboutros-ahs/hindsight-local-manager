@@ -108,9 +108,29 @@ type UpdateConfig struct {
 type RuntimeConfig struct {
 	ResourcesRoot   string `json:"resourcesRoot"`
 	PythonExe       string `json:"pythonExe"`
+	PythonSource    string `json:"pythonSource"`
 	NodeExe         string `json:"nodeExe"`
+	NodeSource      string `json:"nodeSource"`
 	ControlPlaneCLI string `json:"controlPlaneCli"`
 	UIInstalled     bool   `json:"uiInstalled"`
+	RuntimeVersion  string `json:"runtimeVersion"`
+}
+
+type RuntimeComponentStatus struct {
+	Installed bool   `json:"installed"`
+	Source    string `json:"source"`
+	Path      string `json:"path"`
+	Version   string `json:"version"`
+	Detail    string `json:"detail"`
+}
+
+type RuntimeInstallStatus struct {
+	ResourcesRoot string                 `json:"resourcesRoot"`
+	Version       string                 `json:"version"`
+	Python        RuntimeComponentStatus `json:"python"`
+	Node          RuntimeComponentStatus `json:"node"`
+	ControlPlane  RuntimeComponentStatus `json:"controlPlane"`
+	Reranker      RuntimeComponentStatus `json:"reranker"`
 }
 
 type ServiceStatus struct {
@@ -146,23 +166,24 @@ type OpenCodeConfigChoice struct {
 }
 
 type ManagerStatus struct {
-	Config       ManagerConfig     `json:"config"`
-	OpenCode     ServiceStatus     `json:"openCode"`
-	Bridge       ServiceStatus     `json:"bridge"`
-	Hindsight    ServiceStatus     `json:"hindsight"`
-	MCP          ServiceStatus     `json:"mcp"`
-	ControlPlane ServiceStatus     `json:"controlPlane"`
-	OpenCodePlug IntegrationStatus `json:"openCodePlugin"`
-	OpenCodeMCP  IntegrationStatus `json:"openCodeMcp"`
-	CodexHooks   IntegrationStatus `json:"codexHooks"`
-	APIKey       string            `json:"apiKey"`
-	Models       []string          `json:"models"`
-	LogTail      []string          `json:"logTail"`
-	Paths        map[string]string `json:"paths"`
-	Version      string            `json:"version"`
-	Update       UpdateStatus      `json:"update"`
-	Setup        SetupStatus       `json:"setup"`
-	LastUpdated  string            `json:"lastUpdated"`
+	Config       ManagerConfig        `json:"config"`
+	OpenCode     ServiceStatus        `json:"openCode"`
+	Bridge       ServiceStatus        `json:"bridge"`
+	Hindsight    ServiceStatus        `json:"hindsight"`
+	MCP          ServiceStatus        `json:"mcp"`
+	ControlPlane ServiceStatus        `json:"controlPlane"`
+	OpenCodePlug IntegrationStatus    `json:"openCodePlugin"`
+	OpenCodeMCP  IntegrationStatus    `json:"openCodeMcp"`
+	CodexHooks   IntegrationStatus    `json:"codexHooks"`
+	APIKey       string               `json:"apiKey"`
+	Models       []string             `json:"models"`
+	LogTail      []string             `json:"logTail"`
+	Paths        map[string]string    `json:"paths"`
+	Version      string               `json:"version"`
+	Update       UpdateStatus         `json:"update"`
+	Runtime      RuntimeInstallStatus `json:"runtime"`
+	Setup        SetupStatus          `json:"setup"`
+	LastUpdated  string               `json:"lastUpdated"`
 }
 
 type managedProcess struct {
@@ -308,6 +329,7 @@ func (a *App) GetStatus() (ManagerStatus, error) {
 		},
 		Version:     appVersion,
 		Update:      a.GetUpdateStatus(),
+		Runtime:     a.runtimeInstallStatus(),
 		Setup:       a.GetSetupStatus(),
 		LastUpdated: time.Now().Format(time.RFC3339),
 	}, nil

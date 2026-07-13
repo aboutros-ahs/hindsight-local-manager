@@ -6,6 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $versionTag = if ($Version.StartsWith("v")) { $Version } else { "v$Version" }
 $cache = Join-Path $env:TEMP "HindsightLocalManagerInstall-$versionTag"
@@ -31,6 +32,10 @@ function Download-FileWithProgress {
   $response = $request.GetResponse()
   try {
     $total = [int64]$response.ContentLength
+    if ($total -gt 0 -and (Test-Path -LiteralPath $OutFile) -and ((Get-Item -LiteralPath $OutFile).Length -eq $total)) {
+      Write-Output "[$Label] Using cached download ($([math]::Round($total / 1MB, 1)) MB)"
+      return
+    }
     $inputStream = $response.GetResponseStream()
     $outputStream = [IO.File]::Open($OutFile, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try {
@@ -59,6 +64,54 @@ function Download-FileWithProgress {
   }
 }
 
+function Expand-ZipWithProgress {
+  param(
+    [Parameter(Mandatory = $true)][string]$Zip,
+    [Parameter(Mandatory = $true)][string]$Destination,
+    [Parameter(Mandatory = $true)][string]$Label
+  )
+
+  $destinationRoot = [IO.Path]::GetFullPath($Destination)
+  if (!$destinationRoot.EndsWith([IO.Path]::DirectorySeparatorChar)) {
+    $destinationRoot += [IO.Path]::DirectorySeparatorChar
+  }
+
+  $archive = [IO.Compression.ZipFile]::OpenRead($Zip)
+  try {
+    $entries = @($archive.Entries | Where-Object { $_.FullName -and !$_.FullName.EndsWith("/") })
+    $total = $entries.Count
+    $done = 0
+    $lastPercent = -1
+
+    Write-Output "[$Label] Extracting 0% (0 / $total files)"
+    foreach ($entry in $entries) {
+      $relativePath = $entry.FullName -replace '/', [IO.Path]::DirectorySeparatorChar
+      $target = [IO.Path]::GetFullPath((Join-Path $Destination $relativePath))
+      if (!$target.StartsWith($destinationRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Unsafe zip entry path: $($entry.FullName)"
+      }
+
+      $targetDir = [IO.Path]::GetDirectoryName($target)
+      if (!(Test-Path -LiteralPath $targetDir)) {
+        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+      }
+      if (Test-Path -LiteralPath $target) {
+        Remove-Item -LiteralPath $target -Force
+      }
+      [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target)
+
+      $done++
+      $percent = if ($total -gt 0) { [int][math]::Floor(($done * 100) / $total) } else { 100 }
+      if ($percent -ge $lastPercent + 5 -or $percent -eq 100) {
+        $lastPercent = $percent
+        Write-Output "[$Label] Extracting $percent% ($done / $total files)"
+      }
+    }
+  } finally {
+    $archive.Dispose()
+  }
+}
+
 foreach ($component in $components) {
   $marker = Join-Path $InstallDir $component.Marker
   if ((Test-Path -LiteralPath $marker) -and ((Get-Content -LiteralPath $marker -Raw).Trim() -eq $versionTag)) {
@@ -69,8 +122,7 @@ foreach ($component in $components) {
   $url = "$BaseUrl/$($component.Asset)"
   $zip = Join-Path $cache $component.Asset
   Download-FileWithProgress -Url $url -OutFile $zip -Label $component.Name
-  Write-Output "[$($component.Name)] Extracting"
-  Expand-Archive -LiteralPath $zip -DestinationPath $InstallDir -Force
+  Expand-ZipWithProgress -Zip $zip -Destination $InstallDir -Label $component.Name
   Set-Content -LiteralPath $marker -Value $versionTag -Encoding ASCII
   Remove-Item -LiteralPath $zip -Force
   Write-Output "[$($component.Name)] Complete"

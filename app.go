@@ -26,6 +26,7 @@ import (
 const (
 	appName              = "Hindsight Local Manager"
 	appVersionFallback   = "0.1.0"
+	runtimeRootFile      = ".runtime-root"
 	defaultBridgeHost    = "127.0.0.1"
 	defaultBridgePort    = "17331"
 	defaultOpenCodePort  = "4096"
@@ -1008,7 +1009,7 @@ func (a *App) hindsightEnv(cfg ManagerConfig, key string) []string {
 }
 
 func (a *App) hindsightCommand(cfg ManagerConfig) (string, []string, error) {
-	bundledPython := filepath.Join(a.root, "resources", "python", "python.exe")
+	bundledPython := filepath.Join(runtimeResourcesRoot(a.root), "python", "python.exe")
 	if fileExists(bundledPython) {
 		return bundledPython, []string{"-m", "hindsight_api.mcp_local", "--host", valueOr(cfg.HindsightHost, defaultHindsightHost), "--port", valueOr(cfg.HindsightPort, defaultHindsightPort), "--log-level", "info"}, nil
 	}
@@ -1025,7 +1026,7 @@ func (a *App) hindsightCommand(cfg ManagerConfig) (string, []string, error) {
 }
 
 func (a *App) hindsightCommandDescription() string {
-	if fileExists(filepath.Join(a.root, "resources", "python", "python.exe")) {
+	if fileExists(filepath.Join(runtimeResourcesRoot(a.root), "python", "python.exe")) {
 		return "bundled Python runtime"
 	}
 	if path := firstExisting(hindsightScriptCandidates()...); path != "" {
@@ -1035,8 +1036,9 @@ func (a *App) hindsightCommandDescription() string {
 }
 
 func (a *App) controlPlaneCommand() (string, []string, error) {
-	bundledNode := filepath.Join(a.root, "resources", "node", "node.exe")
-	bundledCLI := filepath.Join(a.root, "resources", "control-plane", "node_modules", "@vectorize-io", "hindsight-control-plane", "bin", "cli.js")
+	resourcesRoot := runtimeResourcesRoot(a.root)
+	bundledNode := filepath.Join(resourcesRoot, "node", "node.exe")
+	bundledCLI := filepath.Join(resourcesRoot, "control-plane", "node_modules", "@vectorize-io", "hindsight-control-plane", "bin", "cli.js")
 	if fileExists(bundledNode) && fileExists(bundledCLI) {
 		return bundledNode, []string{bundledCLI}, nil
 	}
@@ -1047,10 +1049,20 @@ func (a *App) controlPlaneCommand() (string, []string, error) {
 }
 
 func (a *App) controlPlaneCommandDescription() string {
-	if fileExists(filepath.Join(a.root, "resources", "node", "node.exe")) {
+	if fileExists(filepath.Join(runtimeResourcesRoot(a.root), "node", "node.exe")) {
 		return "bundled Node runtime"
 	}
 	return "PATH fallback: npx for Hindsight UI"
+}
+
+func runtimeResourcesRoot(installRoot string) string {
+	if data, err := os.ReadFile(filepath.Join(installRoot, runtimeRootFile)); err == nil {
+		path := strings.TrimSpace(string(data))
+		if path != "" && dirExists(path) {
+			return path
+		}
+	}
+	return filepath.Join(installRoot, "resources")
 }
 
 func withManagerDefaults(cfg ManagerConfig, data string) ManagerConfig {
@@ -1157,6 +1169,11 @@ func valueOr(value, fallback string) string {
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func firstExisting(paths ...string) string {

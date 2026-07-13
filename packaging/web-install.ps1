@@ -18,13 +18,15 @@ function Normalize-VersionTag([string]$Version) {
 $appTag = Normalize-VersionTag $AppVersion
 $runtimeTag = Normalize-VersionTag $RuntimeVersion
 $cache = Join-Path $env:TEMP "HindsightLocalManagerInstall-$appTag-$runtimeTag"
-New-Item -ItemType Directory -Path $InstallDir, $cache -Force | Out-Null
+$runtimeInstallRoot = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "HLM\r"
+$runtimeResourcesRoot = Join-Path $runtimeInstallRoot "resources"
+New-Item -ItemType Directory -Path $InstallDir, $cache, $runtimeInstallRoot -Force | Out-Null
 
 $components = @(
-  @{ Name = "App"; Version = $appTag; BaseUrl = $AppBaseUrl; Asset = "Hindsight-Local-Manager-$appTag-app.zip"; Marker = ".app-version" },
-  @{ Name = "Python runtime"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-python.zip"; Marker = ".python-version" },
-  @{ Name = "Node runtime"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-node.zip"; Marker = ".node-version" },
-  @{ Name = "Hindsight UI"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-control-plane.zip"; Marker = ".control-plane-version" }
+  @{ Name = "App"; Version = $appTag; BaseUrl = $AppBaseUrl; Asset = "Hindsight-Local-Manager-$appTag-app.zip"; Marker = ".app-version"; Destination = $InstallDir; MarkerRoot = $InstallDir },
+  @{ Name = "Python runtime"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-python.zip"; Marker = ".python-version"; Destination = $runtimeInstallRoot; MarkerRoot = $runtimeInstallRoot },
+  @{ Name = "Node runtime"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-node.zip"; Marker = ".node-version"; Destination = $runtimeInstallRoot; MarkerRoot = $runtimeInstallRoot },
+  @{ Name = "Hindsight UI"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-control-plane.zip"; Marker = ".control-plane-version"; Destination = $runtimeInstallRoot; MarkerRoot = $runtimeInstallRoot }
 )
 
 function Download-FileWithProgress {
@@ -80,9 +82,6 @@ function Expand-ZipWithProgress {
   )
 
   $destinationRoot = [IO.Path]::GetFullPath($Destination)
-  if (!$destinationRoot.EndsWith([IO.Path]::DirectorySeparatorChar)) {
-    $destinationRoot += [IO.Path]::DirectorySeparatorChar
-  }
 
   $archive = [IO.Compression.ZipFile]::OpenRead($Zip)
   try {
@@ -94,12 +93,19 @@ function Expand-ZipWithProgress {
     Write-Output "[$Label] Extracting 0% (0 / $total files)"
     foreach ($entry in $entries) {
       $relativePath = $entry.FullName -replace '/', [IO.Path]::DirectorySeparatorChar
-      $target = [IO.Path]::GetFullPath((Join-Path $Destination $relativePath))
-      if (!$target.StartsWith($destinationRoot, [StringComparison]::OrdinalIgnoreCase)) {
+      $parts = @($relativePath -split '[\\/]')
+      if ([IO.Path]::IsPathRooted($relativePath) -or ($parts | Where-Object { $_ -eq '..' })) {
         throw "Unsafe zip entry path: $($entry.FullName)"
       }
 
+      $target = Join-Path $destinationRoot $relativePath
       $targetDir = [IO.Path]::GetDirectoryName($target)
+      if ($target.Length -ge 260 -or $targetDir.Length -ge 248) {
+        Write-Output "[$Label] Skipping overlong metadata path: $($entry.FullName)"
+        $done++
+        continue
+      }
+
       if (!(Test-Path -LiteralPath $targetDir)) {
         New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
       }
@@ -121,7 +127,7 @@ function Expand-ZipWithProgress {
 }
 
 foreach ($component in $components) {
-  $marker = Join-Path $InstallDir $component.Marker
+  $marker = Join-Path $component.MarkerRoot $component.Marker
   if ((Test-Path -LiteralPath $marker) -and ((Get-Content -LiteralPath $marker -Raw).Trim() -eq $component.Version)) {
     Write-Output "[$($component.Name)] Already installed for $($component.Version); skipping"
     continue
@@ -130,11 +136,12 @@ foreach ($component in $components) {
   $url = "$($component.BaseUrl)/$($component.Asset)"
   $zip = Join-Path $cache $component.Asset
   Download-FileWithProgress -Url $url -OutFile $zip -Label $component.Name
-  Expand-ZipWithProgress -Zip $zip -Destination $InstallDir -Label $component.Name
+  Expand-ZipWithProgress -Zip $zip -Destination $component.Destination -Label $component.Name
   Set-Content -LiteralPath $marker -Value $component.Version -Encoding ASCII
   Remove-Item -LiteralPath $zip -Force
   Write-Output "[$($component.Name)] Complete"
 }
 
+Set-Content -LiteralPath (Join-Path $InstallDir ".runtime-root") -Value $runtimeResourcesRoot -Encoding ASCII
 Remove-Item -LiteralPath $cache -Recurse -Force -ErrorAction SilentlyContinue
 Write-Output "Install complete"

@@ -102,8 +102,12 @@ jobs:
 
           New-Item -ItemType Directory -Path 'components/app' -Force | Out-Null
           Copy-Item -LiteralPath $exe -Destination 'components/app/Hindsight Local Manager.exe' -Force
+          if (Test-Path -LiteralPath 'resources/integrations') {
+            New-Item -ItemType Directory -Path 'components/app/resources' -Force | Out-Null
+            Copy-Item -LiteralPath 'resources/integrations' -Destination 'components/app/resources/integrations' -Recurse
+          }
           $appAsset = "Hindsight-Local-Manager-$version-app.zip"
-          Compress-Archive -LiteralPath 'components/app/Hindsight Local Manager.exe' -DestinationPath $appAsset -Force
+          Compress-Archive -Path 'components/app/*' -DestinationPath $appAsset -Force
 
           $installerAsset = "Hindsight-Local-Manager-$version-installer.exe"
           $appAssetBaseUrl = "https://github.com/${{ github.repository }}/releases/download/$version"

@@ -80,8 +80,8 @@ func installCodexHooks(installRoot, apiURL string) error {
 		return err
 	}
 	python := "python"
-	if _, err := os.Stat(filepath.Join(installRoot, "resources", "python", "python.exe")); err == nil {
-		python = filepath.Join(installRoot, "resources", "python", "python.exe")
+	if bundledPython := filepath.Join(runtimeResourcesRoot(installRoot), "python", "python.exe"); fileExists(bundledPython) {
+		python = bundledPython
 	}
 	hooks := map[string]any{"hooks": map[string]any{
 		"SessionStart":     []any{hookCommand(python, filepath.Join(scriptsDir, "session_start.py"), 5)},

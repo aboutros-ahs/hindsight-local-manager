@@ -41,7 +41,11 @@ async function refresh() {
     render();
   } catch (error) {
     state.message = errorMessage(error);
-    render();
+    try {
+      render();
+    } catch (renderError) {
+      renderFallback(renderError);
+    }
   }
 }
 
@@ -80,7 +84,7 @@ function render() {
       </header>
 
       <main class="grid">
-        ${state.page === 'setup' ? setupPage(s, cfg) : state.page === 'tools' ? toolsPage(s, cfg) : runtimePage(s, cfg, hindsightRunning, uiRunning)}
+        ${state.page === 'setup' ? setupPage(s, cfg) : state.page === 'tools' ? toolsPage(s, cfg) : runtimePage(s, cfg, hindsightRunning, uiRunning, logText)}
       </main>
 
       <footer class="footer"><span><i></i>${escapeHtml(state.message)}</span><span>${escapeHtml(s.lastUpdated || '')}</span></footer>
@@ -105,6 +109,11 @@ function render() {
       logScrollTop = log.scrollTop;
     }, { passive: true });
   }
+}
+
+function renderFallback(error) {
+  app.innerHTML = `<div class="shell"><main class="grid"><section class="panel hero-panel"><div class="panel-head"><p class="overline">ERROR</p><h2>Startup Failed</h2></div><p class="muted-copy">${escapeHtml(errorMessage(error))}</p><div class="actions"><button data-action="refresh">REFRESH</button></div></section></main></div>`;
+  bind();
 }
 
 function toolsPage(s, cfg) {
@@ -162,7 +171,7 @@ function toolsPage(s, cfg) {
     </section>`;
 }
 
-function runtimePage(s, cfg, hindsightRunning, uiRunning) {
+function runtimePage(s, cfg, hindsightRunning, uiRunning, logText) {
   const apiHealthy = Boolean(s.hindsight?.healthy);
   const uiStartDisabled = !apiHealthy && !uiRunning ? ' disabled title="Start Hindsight API first"' : '';
   const services = [
@@ -510,6 +519,7 @@ function errorMessage(error) {
   return typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
 }
 
+render();
 refresh();
 setInterval(() => {
   if (!document.querySelector('input:focus')) refresh();

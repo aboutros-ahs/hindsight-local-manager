@@ -1,22 +1,30 @@
 param(
   [Parameter(Mandatory = $true)][string]$InstallDir,
-  [Parameter(Mandatory = $true)][string]$Version,
-  [Parameter(Mandatory = $true)][string]$BaseUrl
+  [Parameter(Mandatory = $true)][string]$AppVersion,
+  [Parameter(Mandatory = $true)][string]$AppBaseUrl,
+  [Parameter(Mandatory = $true)][string]$RuntimeVersion,
+  [Parameter(Mandatory = $true)][string]$RuntimeBaseUrl
 )
 
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-$versionTag = if ($Version.StartsWith("v")) { $Version } else { "v$Version" }
-$cache = Join-Path $env:TEMP "HindsightLocalManagerInstall-$versionTag"
+function Normalize-VersionTag([string]$Version) {
+  if ($Version.StartsWith("v") -or $Version.StartsWith("runtime-v")) { return $Version }
+  return "v$Version"
+}
+
+$appTag = Normalize-VersionTag $AppVersion
+$runtimeTag = Normalize-VersionTag $RuntimeVersion
+$cache = Join-Path $env:TEMP "HindsightLocalManagerInstall-$appTag-$runtimeTag"
 New-Item -ItemType Directory -Path $InstallDir, $cache -Force | Out-Null
 
 $components = @(
-  @{ Name = "App"; Asset = "Hindsight-Local-Manager-$versionTag-app.zip"; Marker = ".app-version" },
-  @{ Name = "Python runtime"; Asset = "Hindsight-Local-Manager-$versionTag-python.zip"; Marker = ".python-version" },
-  @{ Name = "Node runtime"; Asset = "Hindsight-Local-Manager-$versionTag-node.zip"; Marker = ".node-version" },
-  @{ Name = "Hindsight UI"; Asset = "Hindsight-Local-Manager-$versionTag-control-plane.zip"; Marker = ".control-plane-version" }
+  @{ Name = "App"; Version = $appTag; BaseUrl = $AppBaseUrl; Asset = "Hindsight-Local-Manager-$appTag-app.zip"; Marker = ".app-version" },
+  @{ Name = "Python runtime"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-python.zip"; Marker = ".python-version" },
+  @{ Name = "Node runtime"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-node.zip"; Marker = ".node-version" },
+  @{ Name = "Hindsight UI"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-control-plane.zip"; Marker = ".control-plane-version" }
 )
 
 function Download-FileWithProgress {
@@ -28,7 +36,7 @@ function Download-FileWithProgress {
 
   Write-Output "[$Label] Starting download"
   $request = [Net.HttpWebRequest]::Create($Url)
-  $request.UserAgent = "HindsightLocalManagerInstaller/$versionTag"
+  $request.UserAgent = "HindsightLocalManagerInstaller/$appTag"
   $response = $request.GetResponse()
   try {
     $total = [int64]$response.ContentLength
@@ -114,16 +122,16 @@ function Expand-ZipWithProgress {
 
 foreach ($component in $components) {
   $marker = Join-Path $InstallDir $component.Marker
-  if ((Test-Path -LiteralPath $marker) -and ((Get-Content -LiteralPath $marker -Raw).Trim() -eq $versionTag)) {
-    Write-Output "[$($component.Name)] Already installed for $versionTag; skipping"
+  if ((Test-Path -LiteralPath $marker) -and ((Get-Content -LiteralPath $marker -Raw).Trim() -eq $component.Version)) {
+    Write-Output "[$($component.Name)] Already installed for $($component.Version); skipping"
     continue
   }
 
-  $url = "$BaseUrl/$($component.Asset)"
+  $url = "$($component.BaseUrl)/$($component.Asset)"
   $zip = Join-Path $cache $component.Asset
   Download-FileWithProgress -Url $url -OutFile $zip -Label $component.Name
   Expand-ZipWithProgress -Zip $zip -Destination $InstallDir -Label $component.Name
-  Set-Content -LiteralPath $marker -Value $versionTag -Encoding ASCII
+  Set-Content -LiteralPath $marker -Value $component.Version -Encoding ASCII
   Remove-Item -LiteralPath $zip -Force
   Write-Output "[$($component.Name)] Complete"
 }

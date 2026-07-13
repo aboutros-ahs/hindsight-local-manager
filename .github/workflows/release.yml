@@ -34,6 +34,27 @@ jobs:
           }
           "version=$version" >> $env:GITHUB_OUTPUT
 
+      - name: Resolve runtime version
+        id: runtime
+        shell: pwsh
+        run: |
+          $runtime = (Get-Content -LiteralPath 'packaging/runtime-version.txt' -Raw).Trim()
+          if ($runtime -notmatch '^(v|runtime-v)\d+\.\d+\.\d+$') {
+            throw "Runtime version must look like v0.1.0 or runtime-v0.1.0. Got: $runtime"
+          }
+          "version=$runtime" >> $env:GITHUB_OUTPUT
+
+      - name: Verify runtime assets
+        shell: pwsh
+        run: |
+          $runtime = '${{ steps.runtime.outputs.version }}'
+          $baseUrl = "https://github.com/${{ github.repository }}/releases/download/$runtime"
+          foreach ($kind in @('python', 'node', 'control-plane')) {
+            $url = "$baseUrl/Hindsight-Local-Manager-$runtime-$kind.zip"
+            Write-Host "Checking $url"
+            Invoke-WebRequest -Uri $url -Method Head -MaximumRedirection 5 -UseBasicParsing | Out-Null
+          }
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -62,10 +83,6 @@ jobs:
         run: npm ci
         working-directory: frontend
 
-      - name: Prepare bundled runtimes
-        shell: pwsh
-        run: .\packaging\prepare-bundle.ps1
-
       - name: Build application
         shell: pwsh
         run: |
@@ -77,38 +94,26 @@ jobs:
         run: |
           $version = '${{ steps.version.outputs.version }}'
           $versionNumber = $version.TrimStart('v')
+          $runtimeVersion = '${{ steps.runtime.outputs.version }}'
           $exe = 'build/bin/Hindsight Local Manager.exe'
           if (!(Test-Path -LiteralPath $exe)) { throw "Missing executable: $exe" }
-          if (!(Test-Path -LiteralPath 'resources')) { throw "Missing bundled resources" }
-          if (Test-Path -LiteralPath 'resources/models') { Remove-Item -LiteralPath 'resources/models' -Recurse -Force }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item -LiteralPath $exe -Destination 'dist/Hindsight Local Manager.exe' -Force
 
-          New-Item -ItemType Directory -Path 'components/app', 'components/python/resources', 'components/node/resources', 'components/control-plane/resources' -Force | Out-Null
+          New-Item -ItemType Directory -Path 'components/app' -Force | Out-Null
           Copy-Item -LiteralPath $exe -Destination 'components/app/Hindsight Local Manager.exe' -Force
-          Copy-Item -LiteralPath 'resources/python' -Destination 'components/python/resources/python' -Recurse
-          Copy-Item -LiteralPath 'resources/node' -Destination 'components/node/resources/node' -Recurse
-          Copy-Item -LiteralPath 'resources/control-plane' -Destination 'components/control-plane/resources/control-plane' -Recurse
           $appAsset = "Hindsight-Local-Manager-$version-app.zip"
-          $pythonAsset = "Hindsight-Local-Manager-$version-python.zip"
-          $nodeAsset = "Hindsight-Local-Manager-$version-node.zip"
-          $controlPlaneAsset = "Hindsight-Local-Manager-$version-control-plane.zip"
           Compress-Archive -LiteralPath 'components/app/Hindsight Local Manager.exe' -DestinationPath $appAsset -Force
-          Compress-Archive -LiteralPath 'components/python/resources' -DestinationPath $pythonAsset -Force
-          Compress-Archive -LiteralPath 'components/node/resources' -DestinationPath $nodeAsset -Force
-          Compress-Archive -LiteralPath 'components/control-plane/resources' -DestinationPath $controlPlaneAsset -Force
 
           $installerAsset = "Hindsight-Local-Manager-$version-installer.exe"
-          $assetBaseUrl = "https://github.com/${{ github.repository }}/releases/download/$version"
-          & makensis /DAPP_VERSION=$versionNumber /DASSET_BASE_URL=$assetBaseUrl /DOUT_FILE="$((Join-Path (Get-Location) $installerAsset))" packaging\web-installer.nsi
+          $appAssetBaseUrl = "https://github.com/${{ github.repository }}/releases/download/$version"
+          $runtimeAssetBaseUrl = "https://github.com/${{ github.repository }}/releases/download/$runtimeVersion"
+          & makensis /DAPP_VERSION=$versionNumber /DAPP_ASSET_BASE_URL=$appAssetBaseUrl /DRUNTIME_VERSION=$runtimeVersion /DRUNTIME_ASSET_BASE_URL=$runtimeAssetBaseUrl /DOUT_FILE="$((Join-Path (Get-Location) $installerAsset))" packaging\web-installer.nsi
           if (!(Test-Path -LiteralPath $installerAsset)) { throw "Missing installer: $installerAsset" }
 
           "exe_asset=dist/Hindsight Local Manager.exe" >> $env:GITHUB_OUTPUT
           "installer_asset=$installerAsset" >> $env:GITHUB_OUTPUT
           "app_asset=$appAsset" >> $env:GITHUB_OUTPUT
-          "python_asset=$pythonAsset" >> $env:GITHUB_OUTPUT
-          "node_asset=$nodeAsset" >> $env:GITHUB_OUTPUT
-          "control_plane_asset=$controlPlaneAsset" >> $env:GITHUB_OUTPUT
         id: package
 
       - name: Publish GitHub release
@@ -120,8 +125,5 @@ jobs:
             ${{ steps.package.outputs.exe_asset }}
             ${{ steps.package.outputs.installer_asset }}
             ${{ steps.package.outputs.app_asset }}
-            ${{ steps.package.outputs.python_asset }}
-            ${{ steps.package.outputs.node_asset }}
-            ${{ steps.package.outputs.control_plane_asset }}
           generate_release_notes: true
           overwrite_files: true

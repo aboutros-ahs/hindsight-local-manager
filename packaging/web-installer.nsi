@@ -7,8 +7,14 @@ Unicode true
 !ifndef BUNDLE_URL
   !define BUNDLE_URL "https://github.com/aboutros-ahs/hindsight-local-manager/releases/latest"
 !endif
-!ifndef ASSET_BASE_URL
-  !define ASSET_BASE_URL "https://github.com/aboutros-ahs/hindsight-local-manager/releases/latest/download"
+!ifndef APP_ASSET_BASE_URL
+  !define APP_ASSET_BASE_URL "https://github.com/aboutros-ahs/hindsight-local-manager/releases/latest/download"
+!endif
+!ifndef RUNTIME_VERSION
+  !define RUNTIME_VERSION "v0.1.7"
+!endif
+!ifndef RUNTIME_ASSET_BASE_URL
+  !define RUNTIME_ASSET_BASE_URL "https://github.com/aboutros-ahs/hindsight-local-manager/releases/download/${RUNTIME_VERSION}"
 !endif
 !ifndef OUT_FILE
   !define OUT_FILE "Hindsight-Local-Manager-installer.exe"
@@ -34,7 +40,7 @@ Section "Install"
   InitPluginsDir
   File /oname=$PLUGINSDIR\web-install.ps1 "web-install.ps1"
   DetailPrint "Downloading Hindsight Local Manager components..."
-  nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\web-install.ps1" -InstallDir "$INSTDIR" -Version "${APP_VERSION}" -BaseUrl "${ASSET_BASE_URL}"`
+  nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\web-install.ps1" -InstallDir "$INSTDIR" -AppVersion "${APP_VERSION}" -AppBaseUrl "${APP_ASSET_BASE_URL}" -RuntimeVersion "${RUNTIME_VERSION}" -RuntimeBaseUrl "${RUNTIME_ASSET_BASE_URL}"`
   Pop $0
   ${If} $0 != 0
     Abort "Bundle download or extraction failed. Check your internet connection and try again."

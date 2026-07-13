@@ -1,0 +1,82 @@
+name: Runtime Components
+
+on:
+  push:
+    tags:
+      - 'runtime-v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Runtime component version tag, for example runtime-v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Build Runtime Components
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $version = '${{ github.event.inputs.version }}'
+          if (-not $version) { $version = '${{ github.ref_name }}' }
+          if ($version -notmatch '^(v|runtime-v)\d+\.\d+\.\d+$') {
+            throw "Version must look like v0.1.0 or runtime-v0.1.0. Got: $version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Prepare bundled runtimes
+        shell: pwsh
+        run: .\packaging\prepare-bundle.ps1
+
+      - name: Package runtime assets
+        id: package
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          foreach ($path in @('resources/python', 'resources/node', 'resources/control-plane')) {
+            if (!(Test-Path -LiteralPath $path)) { throw "Missing bundled resource: $path" }
+          }
+          if (Test-Path -LiteralPath 'resources/models') { Remove-Item -LiteralPath 'resources/models' -Recurse -Force }
+
+          New-Item -ItemType Directory -Path 'components/python/resources', 'components/node/resources', 'components/control-plane/resources' -Force | Out-Null
+          Copy-Item -LiteralPath 'resources/python' -Destination 'components/python/resources/python' -Recurse
+          Copy-Item -LiteralPath 'resources/node' -Destination 'components/node/resources/node' -Recurse
+          Copy-Item -LiteralPath 'resources/control-plane' -Destination 'components/control-plane/resources/control-plane' -Recurse
+
+          $pythonAsset = "Hindsight-Local-Manager-$version-python.zip"
+          $nodeAsset = "Hindsight-Local-Manager-$version-node.zip"
+          $controlPlaneAsset = "Hindsight-Local-Manager-$version-control-plane.zip"
+          Compress-Archive -LiteralPath 'components/python/resources' -DestinationPath $pythonAsset -Force
+          Compress-Archive -LiteralPath 'components/node/resources' -DestinationPath $nodeAsset -Force
+          Compress-Archive -LiteralPath 'components/control-plane/resources' -DestinationPath $controlPlaneAsset -Force
+
+          "python_asset=$pythonAsset" >> $env:GITHUB_OUTPUT
+          "node_asset=$nodeAsset" >> $env:GITHUB_OUTPUT
+          "control_plane_asset=$controlPlaneAsset" >> $env:GITHUB_OUTPUT
+
+      - name: Publish runtime release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Hindsight Local Manager Runtime ${{ steps.version.outputs.version }}
+          body: |
+            Runtime components for Hindsight Local Manager installers.
+
+            To use these assets for app releases, update packaging/runtime-version.txt to `${{ steps.version.outputs.version }}`.
+          files: |
+            ${{ steps.package.outputs.python_asset }}
+            ${{ steps.package.outputs.node_asset }}
+            ${{ steps.package.outputs.control_plane_asset }}
+          prerelease: true
+          overwrite_files: true

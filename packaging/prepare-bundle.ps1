@@ -32,6 +32,13 @@ function Expand-ZipClean($Zip, $Destination) {
   Expand-Archive -LiteralPath $Zip -DestinationPath $Destination -Force
 }
 
+function Invoke-Native($FilePath, [string[]]$Arguments) {
+  & $FilePath @Arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "$FilePath failed with exit code $LASTEXITCODE"
+  }
+}
+
 Write-Host "Preparing bundled resources in $resources"
 
 $nodeZip = Join-Path $cache "node-v$NodeVersion-win-x64.zip"
@@ -57,24 +64,25 @@ if ($pth) {
 
 $getPip = Join-Path $cache "get-pip.py"
 Download-File "https://bootstrap.pypa.io/get-pip.py" $getPip
-& (Join-Path $pythonDir "python.exe") $getPip
-& (Join-Path $pythonDir "python.exe") -m pip install --upgrade pip
+$pythonExe = Join-Path $pythonDir "python.exe"
+Invoke-Native $pythonExe @($getPip)
+Invoke-Native $pythonExe @("-m", "pip", "install", "--upgrade", "pip")
 $sitePackages = Join-Path $pythonDir "Lib\site-packages"
 New-Item -ItemType Directory -Path $sitePackages -Force | Out-Null
-& (Join-Path $pythonDir "python.exe") -m pip install --upgrade --target $sitePackages --no-warn-script-location hindsight-api sentence-transformers
-& (Join-Path $pythonDir "python.exe") -c "import hindsight_api, sentence_transformers; print('Python runtime imports OK')"
+Invoke-Native $pythonExe @("-m", "pip", "install", "--upgrade", "--target", $sitePackages, "--no-warn-script-location", "hindsight-api", "sentence-transformers")
+Invoke-Native $pythonExe @("-c", "import hindsight_api, sentence_transformers; print('Python runtime imports OK')")
 
 Get-ChildItem -LiteralPath $pythonDir -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 Get-ChildItem -LiteralPath $pythonDir -Recurse -Directory | Where-Object { $_.Name -in @("tests", "test") } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 Get-ChildItem -LiteralPath $pythonDir -Recurse -Include "*.pyc", "*.pyo" | Remove-Item -Force -ErrorAction SilentlyContinue
-& (Join-Path $pythonDir "python.exe") -m pip cache purge
+Invoke-Native $pythonExe @("-m", "pip", "cache", "purge")
 
 Push-Location $controlPlaneDir
 try {
   if (!(Test-Path -LiteralPath "package.json")) {
     '{"private":true,"dependencies":{"@vectorize-io/hindsight-control-plane":"latest"}}' | Set-Content -LiteralPath "package.json" -Encoding ASCII
   }
-  & (Join-Path $nodeDir "npm.cmd") install --omit=dev
+  Invoke-Native (Join-Path $nodeDir "npm.cmd") @("install", "--omit=dev")
 } finally {
   Pop-Location
 }

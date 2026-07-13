@@ -29,6 +29,17 @@ SetCompressor /SOLID lzma
 ShowInstDetails show
 ShowUninstDetails show
 
+InstType "Recommended"
+InstType "Lightweight API only"
+InstType "Portable"
+
+ComponentText "Choose which Hindsight Local Manager components to install. Recommended reuses compatible system runtimes when available and falls back to managed runtimes automatically."
+DirText "Choose where to install the Hindsight Local Manager application. Managed runtimes are stored separately under your local app data folder."
+
+Page components
+Page directory
+Page instfiles
+
 Var IncludeUI
 Var PythonMode
 Var NodeMode
@@ -45,12 +56,15 @@ Section "Core app and Hindsight API (required)" SecCore
 SectionEnd
 
 Section "Hindsight UI (adds Node + UI runtime)" SecUI
+  SectionIn 1 3
 SectionEnd
 
 Section "Reuse compatible system Python if found" SecSystemPython
+  SectionIn 1 2
 SectionEnd
 
 Section "Reuse compatible system Node if found" SecSystemNode
+  SectionIn 1
 SectionEnd
 
 Section "-Install"

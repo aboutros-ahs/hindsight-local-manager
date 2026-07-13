@@ -3,7 +3,10 @@ param(
   [Parameter(Mandatory = $true)][string]$AppVersion,
   [Parameter(Mandatory = $true)][string]$AppBaseUrl,
   [Parameter(Mandatory = $true)][string]$RuntimeVersion,
-  [Parameter(Mandatory = $true)][string]$RuntimeBaseUrl
+  [Parameter(Mandatory = $true)][string]$RuntimeBaseUrl,
+  [string]$IncludeUI = "true",
+  [ValidateSet("managed", "auto")][string]$PythonMode = "managed",
+  [ValidateSet("managed", "auto")][string]$NodeMode = "managed"
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,17 +20,97 @@ function Normalize-VersionTag([string]$Version) {
 
 $appTag = Normalize-VersionTag $AppVersion
 $runtimeTag = Normalize-VersionTag $RuntimeVersion
-$cache = Join-Path $env:TEMP "HindsightLocalManagerInstall-$appTag-$runtimeTag"
+$installHash = [math]::Abs($InstallDir.ToLowerInvariant().GetHashCode())
+$cache = Join-Path $env:TEMP "HindsightLocalManagerInstall-$appTag-$runtimeTag-$installHash"
 $runtimeInstallRoot = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "HLM\r"
 $runtimeResourcesRoot = Join-Path $runtimeInstallRoot "resources"
 New-Item -ItemType Directory -Path $InstallDir, $cache, $runtimeInstallRoot -Force | Out-Null
 
-$components = @(
-  @{ Name = "App"; Version = $appTag; BaseUrl = $AppBaseUrl; Asset = "Hindsight-Local-Manager-$appTag-app.zip"; Marker = ".app-version"; Destination = $InstallDir; MarkerRoot = $InstallDir },
-  @{ Name = "Python runtime"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-python.zip"; Marker = ".python-version"; Destination = $runtimeInstallRoot; MarkerRoot = $runtimeInstallRoot },
-  @{ Name = "Node runtime"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-node.zip"; Marker = ".node-version"; Destination = $runtimeInstallRoot; MarkerRoot = $runtimeInstallRoot },
-  @{ Name = "Hindsight UI"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-control-plane.zip"; Marker = ".control-plane-version"; Destination = $runtimeInstallRoot; MarkerRoot = $runtimeInstallRoot }
-)
+function Is-Truthy([string]$Value) {
+  return $Value -match '^(1|true|yes|on)$'
+}
+
+function Test-PythonRuntime([string]$Python) {
+  if (!$Python -or !(Test-Path -LiteralPath $Python)) { return $false }
+  $code = @'
+import importlib.metadata as md
+import sys
+if sys.version_info < (3, 11):
+    raise SystemExit(2)
+if md.version("hindsight-api-slim") != "0.8.4":
+    raise SystemExit(3)
+import hindsight_api
+import sentence_transformers
+'@
+  $probe = Join-Path $cache "python-runtime-probe.py"
+  Set-Content -LiteralPath $probe -Value $code -Encoding ASCII
+  $previousNoUserSite = $env:PYTHONNOUSERSITE
+  try {
+    $env:PYTHONNOUSERSITE = "1"
+    & $Python $probe *> $null
+    return $LASTEXITCODE -eq 0
+  } catch {
+    return $false
+  } finally {
+    $env:PYTHONNOUSERSITE = $previousNoUserSite
+  }
+}
+
+function Find-CompatiblePython {
+  $commands = @(Get-Command python.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
+  $commands += @(Get-Command py.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
+  foreach ($command in ($commands | Where-Object { $_ } | Select-Object -Unique)) {
+    if ((Split-Path -Leaf $command) -ieq "py.exe") {
+      $resolved = & $command -3.11 -c "import sys; print(sys.executable)" 2>$null
+      if ($LASTEXITCODE -eq 0 -and $resolved -and (Test-PythonRuntime $resolved.Trim())) { return $resolved.Trim() }
+      continue
+    }
+    if (Test-PythonRuntime $command) { return $command }
+  }
+  return ""
+}
+
+function Test-NodeRuntime([string]$Node) {
+  if (!$Node -or !(Test-Path -LiteralPath $Node)) { return $false }
+  $version = & $Node --version 2>$null
+  if ($LASTEXITCODE -ne 0 -or !$version) { return $false }
+  if ($version -match '^v(\d+)\.') { return [int]$Matches[1] -ge 20 }
+  return $false
+}
+
+function Find-CompatibleNode {
+  foreach ($command in (Get-Command node.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.Source } | Select-Object -Unique)) {
+    if (Test-NodeRuntime $command) { return $command }
+  }
+  return ""
+}
+
+Remove-Item -LiteralPath (Join-Path $InstallDir "resources\python") -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $InstallDir "resources\node") -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $InstallDir "resources\control-plane") -Recurse -Force -ErrorAction SilentlyContinue
+
+$uiEnabled = Is-Truthy $IncludeUI
+$pythonExe = ""
+$nodeExe = ""
+if ($PythonMode -eq "auto") {
+  $pythonExe = Find-CompatiblePython
+  if ($pythonExe) { Write-Output "[Python runtime] Using compatible system Python: $pythonExe" }
+}
+if ($uiEnabled -and $NodeMode -eq "auto") {
+  $nodeExe = Find-CompatibleNode
+  if ($nodeExe) { Write-Output "[Node runtime] Using compatible system Node: $nodeExe" }
+}
+
+$components = @(@{ Name = "App"; Version = $appTag; BaseUrl = $AppBaseUrl; Asset = "Hindsight-Local-Manager-$appTag-app.zip"; Marker = ".app-version"; Destination = $InstallDir; MarkerRoot = $InstallDir })
+if (!$pythonExe) {
+  $components += @{ Name = "Python runtime"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-python.zip"; Marker = ".python-version"; Destination = $runtimeInstallRoot; MarkerRoot = $runtimeInstallRoot }
+}
+if ($uiEnabled) {
+  if (!$nodeExe) {
+    $components += @{ Name = "Node runtime"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-node.zip"; Marker = ".node-version"; Destination = $runtimeInstallRoot; MarkerRoot = $runtimeInstallRoot }
+  }
+  $components += @{ Name = "Hindsight UI"; Version = $runtimeTag; BaseUrl = $RuntimeBaseUrl; Asset = "Hindsight-Local-Manager-$runtimeTag-control-plane.zip"; Marker = ".control-plane-version"; Destination = $runtimeInstallRoot; MarkerRoot = $runtimeInstallRoot }
+}
 
 function Download-FileWithProgress {
   param(
@@ -142,6 +225,18 @@ foreach ($component in $components) {
   Write-Output "[$($component.Name)] Complete"
 }
 
+if (!$pythonExe) { $pythonExe = Join-Path $runtimeResourcesRoot "python\python.exe" }
+if ($uiEnabled -and !$nodeExe) { $nodeExe = Join-Path $runtimeResourcesRoot "node\node.exe" }
+$controlPlaneCli = if ($uiEnabled) { Join-Path $runtimeResourcesRoot "control-plane\node_modules\@vectorize-io\hindsight-control-plane\bin\cli.js" } else { "" }
+
 Set-Content -LiteralPath (Join-Path $InstallDir ".runtime-root") -Value $runtimeResourcesRoot -Encoding ASCII
+$runtimeConfig = @{
+  resourcesRoot = $runtimeResourcesRoot
+  pythonExe = $pythonExe
+  nodeExe = $nodeExe
+  controlPlaneCli = $controlPlaneCli
+  uiInstalled = $uiEnabled
+}
+$runtimeConfig | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $InstallDir ".runtime-config.json") -Encoding ASCII
 Remove-Item -LiteralPath $cache -Recurse -Force -ErrorAction SilentlyContinue
 Write-Output "Install complete"

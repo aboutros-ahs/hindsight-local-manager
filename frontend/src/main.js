@@ -1,6 +1,7 @@
 import './styles.css';
 import {
   GetStatus,
+  GetSetupStatus,
   LoadConfig,
   SaveConfig,
   StartAll,
@@ -29,10 +30,11 @@ import {
 
 const app = document.querySelector('#app');
 document.title = 'Hindsight Local Manager';
-const state = { status: null, config: null, message: 'READY', busy: false, page: 'runtime', starting: new Set(), stopping: new Set(), openCodeInstall: null };
+const state = { status: null, config: null, message: 'READY', busy: false, page: 'runtime', starting: new Set(), stopping: new Set(), openCodeInstall: null, setupOverlay: null };
 let gridScrollTop = 0;
 let logScrollTop = 0;
 let logAutoFollow = true;
+let setupHideTimer = null;
 
 async function refresh() {
   try {
@@ -62,6 +64,7 @@ function render() {
   const hindsightRunning = Boolean(s.hindsight?.running || s.hindsight?.healthy);
   const uiRunning = Boolean(s.controlPlane?.running || s.controlPlane?.healthy);
   const logText = escapeHtml((s.logTail || []).join('\n') || 'NO_LOGS');
+  const setupForModal = state.setupOverlay || s.setup;
   app.innerHTML = `
     <div class="shell">
       <header class="topbar">
@@ -89,7 +92,7 @@ function render() {
 
       <footer class="footer"><span><i></i>${escapeHtml(state.message)}</span><span>${escapeHtml(s.lastUpdated || '')}</span></footer>
       ${openCodeConfigDialog()}
-      ${setupProgressDialog(s.setup)}
+      ${setupProgressDialog(setupForModal)}
     </div>`;
   bind();
   const grid = document.querySelector('.grid');
@@ -173,10 +176,12 @@ function toolsPage(s, cfg) {
 
 function runtimePage(s, cfg, hindsightRunning, uiRunning, logText) {
   const apiHealthy = Boolean(s.hindsight?.healthy);
+  const uiInstalled = s.controlPlane?.detail !== 'not installed';
   const uiStartDisabled = !apiHealthy && !uiRunning ? ' disabled title="Start Hindsight API first"' : '';
+  const uiDisabled = uiInstalled ? uiStartDisabled : ' disabled title="Hindsight UI was not selected during installation"';
   const services = [
     ['api', 'Hindsight API', s.hindsight, `<button data-action="toggle-hindsight">${hindsightRunning ? 'STOP HINDSIGHT' : 'START HINDSIGHT'}</button>`],
-    ['ui', 'Hindsight UI', s.controlPlane, `<button data-action="toggle-ui"${uiRunning ? '' : uiStartDisabled}>${uiRunning ? 'STOP HINDSIGHT UI' : 'START HINDSIGHT UI'}</button><button data-action="open-ui">OPEN UI</button>`],
+    ['ui', 'Hindsight UI', s.controlPlane, `<button data-action="toggle-ui"${uiRunning ? '' : uiDisabled}>${uiRunning ? 'STOP HINDSIGHT UI' : 'START HINDSIGHT UI'}</button><button data-action="open-ui"${uiInstalled ? '' : ' disabled'}>OPEN UI</button>`],
   ];
   return `
     <section class="panel hero-panel">
@@ -306,7 +311,7 @@ function openCodeConfigDialog() {
 }
 
 function setupProgressDialog(setup = {}) {
-  if (!setup.active) return '';
+  if (!setup.active && setup !== state.setupOverlay) return '';
   const steps = setup.steps || [];
   return `<div class="modal-backdrop setup-backdrop">
     <section class="modal panel setup-modal">
@@ -364,13 +369,42 @@ function bind() {
   });
 }
 
+async function runWithSetupPolling(action) {
+  let done = false;
+  const poll = async () => {
+    while (!done) {
+      try {
+        state.setupOverlay = await GetSetupStatus();
+        render();
+      } catch {
+        // Keep the main action error path authoritative.
+      }
+      await delay(350);
+    }
+  };
+  const poller = poll();
+  try {
+    await action();
+    state.setupOverlay = await GetSetupStatus();
+    render();
+    if (setupHideTimer) clearTimeout(setupHideTimer);
+    setupHideTimer = setTimeout(() => {
+      state.setupOverlay = null;
+      render();
+    }, 900);
+  } finally {
+    done = true;
+    await poller;
+  }
+}
+
 async function runAction(action, source) {
   try {
     markStarting(action);
     markStopping(action);
     state.message = `${action.toUpperCase()}...`;
     render();
-    if (action === 'start-all') await StartAll();
+    if (action === 'start-all') await runWithSetupPolling(() => StartAll());
     if (action === 'stop-all') await StopAll();
     if (action === 'toggle-hindsight') {
       if (state.status?.hindsight?.running || state.status?.hindsight?.healthy) await StopHindsight();

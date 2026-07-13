@@ -1,5 +1,6 @@
 Unicode true
 !include LogicLib.nsh
+!include Sections.nsh
 
 !ifndef APP_VERSION
   !define APP_VERSION "0.0.0"
@@ -28,6 +29,10 @@ SetCompressor /SOLID lzma
 ShowInstDetails show
 ShowUninstDetails show
 
+Var IncludeUI
+Var PythonMode
+Var NodeMode
+
 VIProductVersion "${APP_VERSION}.0"
 VIAddVersionKey "ProductName" "Hindsight Local Manager"
 VIAddVersionKey "CompanyName" "Alex Boutros"
@@ -35,12 +40,43 @@ VIAddVersionKey "FileDescription" "Hindsight Local Manager web installer"
 VIAddVersionKey "FileVersion" "${APP_VERSION}"
 VIAddVersionKey "ProductVersion" "${APP_VERSION}"
 
-Section "Install"
+Section "Core app and Hindsight API (required)" SecCore
+  SectionIn RO
+SectionEnd
+
+Section "Hindsight UI (adds Node + UI runtime)" SecUI
+SectionEnd
+
+Section "Reuse compatible system Python if found" SecSystemPython
+SectionEnd
+
+Section "Reuse compatible system Node if found" SecSystemNode
+SectionEnd
+
+Section "-Install"
   SetOutPath "$INSTDIR"
   InitPluginsDir
   File /oname=$PLUGINSDIR\web-install.ps1 "web-install.ps1"
+  StrCpy $IncludeUI "false"
+  StrCpy $PythonMode "managed"
+  StrCpy $NodeMode "managed"
+  SectionGetFlags ${SecUI} $0
+  IntOp $1 $0 & ${SF_SELECTED}
+  ${If} $1 <> 0
+    StrCpy $IncludeUI "true"
+  ${EndIf}
+  SectionGetFlags ${SecSystemPython} $0
+  IntOp $1 $0 & ${SF_SELECTED}
+  ${If} $1 <> 0
+    StrCpy $PythonMode "auto"
+  ${EndIf}
+  SectionGetFlags ${SecSystemNode} $0
+  IntOp $1 $0 & ${SF_SELECTED}
+  ${If} $1 <> 0
+    StrCpy $NodeMode "auto"
+  ${EndIf}
   DetailPrint "Downloading Hindsight Local Manager components..."
-  nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\web-install.ps1" -InstallDir "$INSTDIR" -AppVersion "${APP_VERSION}" -AppBaseUrl "${APP_ASSET_BASE_URL}" -RuntimeVersion "${RUNTIME_VERSION}" -RuntimeBaseUrl "${RUNTIME_ASSET_BASE_URL}"`
+  nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\web-install.ps1" -InstallDir "$INSTDIR" -AppVersion "${APP_VERSION}" -AppBaseUrl "${APP_ASSET_BASE_URL}" -RuntimeVersion "${RUNTIME_VERSION}" -RuntimeBaseUrl "${RUNTIME_ASSET_BASE_URL}" -IncludeUI "$IncludeUI" -PythonMode "$PythonMode" -NodeMode "$NodeMode"`
   Pop $0
   ${If} $0 != 0
     Abort "Bundle download or extraction failed. Check your internet connection and try again."
@@ -57,6 +93,8 @@ Section "Uninstall"
   Delete "$INSTDIR\Hindsight Local Manager.exe"
   Delete "$INSTDIR\Uninstall.exe"
   Delete "$INSTDIR\.runtime-root"
+  Delete "$INSTDIR\.runtime-config.json"
+  Delete "$INSTDIR\.app-version"
   RMDir /r "$INSTDIR\resources"
   RMDir "$INSTDIR"
   RMDir /r "$LOCALAPPDATA\HLM\r"

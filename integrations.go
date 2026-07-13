@@ -80,7 +80,9 @@ func installCodexHooks(installRoot, apiURL string) error {
 		return err
 	}
 	python := "python"
-	if bundledPython := filepath.Join(runtimeResourcesRoot(installRoot), "python", "python.exe"); fileExists(bundledPython) {
+	if configuredPython := runtimePythonExe(installRoot); configuredPython != "" {
+		python = configuredPython
+	} else if bundledPython := filepath.Join(runtimeResourcesRoot(installRoot), "python", "python.exe"); fileExists(bundledPython) {
 		python = bundledPython
 	}
 	hooks := map[string]any{"hooks": map[string]any{

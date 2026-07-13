@@ -27,6 +27,7 @@ const (
 	appName              = "Hindsight Local Manager"
 	appVersionFallback   = "0.1.0"
 	runtimeRootFile      = ".runtime-root"
+	runtimeConfigFile    = ".runtime-config.json"
 	defaultBridgeHost    = "127.0.0.1"
 	defaultBridgePort    = "17331"
 	defaultOpenCodePort  = "4096"
@@ -102,6 +103,14 @@ type ManagerConfig struct {
 type UpdateConfig struct {
 	GitHubRepo    string `json:"githubRepo"`
 	CheckOnLaunch bool   `json:"checkOnLaunch"`
+}
+
+type RuntimeConfig struct {
+	ResourcesRoot   string `json:"resourcesRoot"`
+	PythonExe       string `json:"pythonExe"`
+	NodeExe         string `json:"nodeExe"`
+	ControlPlaneCLI string `json:"controlPlaneCli"`
+	UIInstalled     bool   `json:"uiInstalled"`
 }
 
 type ServiceStatus struct {
@@ -333,12 +342,16 @@ func (a *App) StartAll() error {
 	if err := a.EnsureDefaultMemoryBank(); err != nil {
 		a.appendLog("default memory bank setup failed: " + err.Error())
 	}
-	a.updateSetupStep("Hindsight UI", "running", 40, "Starting UI")
-	if err := a.StartControlPlane(); err != nil {
-		a.failSetup("Hindsight UI", err)
-		return err
+	if a.controlPlaneInstalled() {
+		a.updateSetupStep("Hindsight UI", "running", 40, "Starting UI")
+		if err := a.StartControlPlane(); err != nil {
+			a.failSetup("Hindsight UI", err)
+			return err
+		}
+		a.updateSetupStep("Hindsight UI", "complete", 100, "UI ready")
+	} else {
+		a.updateSetupStep("Hindsight UI", "complete", 100, "UI not installed")
 	}
-	a.updateSetupStep("Hindsight UI", "complete", 100, "UI ready")
 	a.finishSetup("Services ready")
 	return nil
 }
@@ -356,7 +369,7 @@ func (a *App) startLaunchServices(cfg ManagerConfig) error {
 	if err := a.EnsureDefaultMemoryBank(); err != nil {
 		a.appendLog("default memory bank setup failed: " + err.Error())
 	}
-	if cfg.StartUIOnLaunch {
+	if cfg.StartUIOnLaunch && a.controlPlaneInstalled() {
 		if err := a.StartControlPlane(); err != nil {
 			return err
 		}
@@ -495,6 +508,11 @@ func (a *App) StartControlPlane() error {
 	if !a.setupActive() {
 		startedSetup = true
 		a.startSetup("Starting Hindsight UI", []SetupStep{{Name: "Hindsight UI", State: "pending", Progress: 0, Detail: "Waiting to start"}})
+	}
+	if !a.controlPlaneInstalled() {
+		err := errors.New("Hindsight UI was not installed; rerun the installer and select Hindsight UI")
+		a.failSetup("Hindsight UI", err)
+		return err
 	}
 	if a.processRunning(a.controlPlane) {
 		a.updateSetupStep("Hindsight UI", "complete", 100, "Already running")
@@ -997,18 +1015,26 @@ func (a *App) hindsightEnv(cfg ManagerConfig, key string) []string {
 	return append(a.modelEnv(),
 		"PYTHONUTF8=1",
 		"PYTHONIOENCODING=utf-8",
+		"PYTHONNOUSERSITE=1",
 		"HINDSIGHT_API_DATABASE_URL=pg0://hindsight-local-manager",
 		"HINDSIGHT_API_LLM_PROVIDER=openai",
 		"HINDSIGHT_API_LLM_BASE_URL="+bridgeURL,
 		"HINDSIGHT_API_LLM_API_KEY="+key,
 		"HINDSIGHT_API_LLM_MODEL="+model,
 		"HINDSIGHT_API_EMBEDDINGS_PROVIDER=local",
+		"HINDSIGHT_API_RERANKER_PROVIDER=none",
+		"HINDSIGHT_API_WORKER_MAX_SLOTS=2",
+		"HINDSIGHT_API_RETAIN_MAX_CONCURRENT=1",
+		"HINDSIGHT_API_RECALL_MAX_CONCURRENT=2",
 		"HINDSIGHT_API_HOST="+valueOr(cfg.HindsightHost, defaultHindsightHost),
 		"HINDSIGHT_API_PORT="+valueOr(cfg.HindsightPort, defaultHindsightPort),
 	)
 }
 
 func (a *App) hindsightCommand(cfg ManagerConfig) (string, []string, error) {
+	if python := runtimePythonExe(a.root); python != "" {
+		return python, []string{"-m", "hindsight_api.mcp_local", "--host", valueOr(cfg.HindsightHost, defaultHindsightHost), "--port", valueOr(cfg.HindsightPort, defaultHindsightPort), "--log-level", "info"}, nil
+	}
 	bundledPython := filepath.Join(runtimeResourcesRoot(a.root), "python", "python.exe")
 	if fileExists(bundledPython) {
 		return bundledPython, []string{"-m", "hindsight_api.mcp_local", "--host", valueOr(cfg.HindsightHost, defaultHindsightHost), "--port", valueOr(cfg.HindsightPort, defaultHindsightPort), "--log-level", "info"}, nil
@@ -1026,6 +1052,9 @@ func (a *App) hindsightCommand(cfg ManagerConfig) (string, []string, error) {
 }
 
 func (a *App) hindsightCommandDescription() string {
+	if python := runtimePythonExe(a.root); python != "" {
+		return "configured Python runtime: " + python
+	}
 	if fileExists(filepath.Join(runtimeResourcesRoot(a.root), "python", "python.exe")) {
 		return "bundled Python runtime"
 	}
@@ -1036,6 +1065,12 @@ func (a *App) hindsightCommandDescription() string {
 }
 
 func (a *App) controlPlaneCommand() (string, []string, error) {
+	if runtimeConfigExists(a.root) && !loadRuntimeConfig(a.root).UIInstalled {
+		return "", nil, errors.New("Hindsight UI was not installed")
+	}
+	if node, cli := runtimeControlPlaneCommand(a.root); node != "" && cli != "" {
+		return node, []string{cli}, nil
+	}
 	resourcesRoot := runtimeResourcesRoot(a.root)
 	bundledNode := filepath.Join(resourcesRoot, "node", "node.exe")
 	bundledCLI := filepath.Join(resourcesRoot, "control-plane", "node_modules", "@vectorize-io", "hindsight-control-plane", "bin", "cli.js")
@@ -1049,6 +1084,12 @@ func (a *App) controlPlaneCommand() (string, []string, error) {
 }
 
 func (a *App) controlPlaneCommandDescription() string {
+	if runtimeConfigExists(a.root) && !loadRuntimeConfig(a.root).UIInstalled {
+		return "not installed"
+	}
+	if node, cli := runtimeControlPlaneCommand(a.root); node != "" && cli != "" {
+		return "configured Node runtime: " + node
+	}
 	if fileExists(filepath.Join(runtimeResourcesRoot(a.root), "node", "node.exe")) {
 		return "bundled Node runtime"
 	}
@@ -1056,6 +1097,9 @@ func (a *App) controlPlaneCommandDescription() string {
 }
 
 func runtimeResourcesRoot(installRoot string) string {
+	if cfg := loadRuntimeConfig(installRoot); cfg.ResourcesRoot != "" && dirExists(cfg.ResourcesRoot) {
+		return cfg.ResourcesRoot
+	}
 	if data, err := os.ReadFile(filepath.Join(installRoot, runtimeRootFile)); err == nil {
 		path := strings.TrimSpace(string(data))
 		if path != "" && dirExists(path) {
@@ -1063,6 +1107,49 @@ func runtimeResourcesRoot(installRoot string) string {
 		}
 	}
 	return filepath.Join(installRoot, "resources")
+}
+
+func runtimePythonExe(installRoot string) string {
+	if cfg := loadRuntimeConfig(installRoot); cfg.PythonExe != "" && fileExists(cfg.PythonExe) {
+		return cfg.PythonExe
+	}
+	return ""
+}
+
+func runtimeControlPlaneCommand(installRoot string) (string, string) {
+	cfg := loadRuntimeConfig(installRoot)
+	if !cfg.UIInstalled {
+		return "", ""
+	}
+	if cfg.NodeExe != "" && cfg.ControlPlaneCLI != "" && fileExists(cfg.NodeExe) && fileExists(cfg.ControlPlaneCLI) {
+		return cfg.NodeExe, cfg.ControlPlaneCLI
+	}
+	return "", ""
+}
+
+func (a *App) controlPlaneInstalled() bool {
+	cfg := loadRuntimeConfig(a.root)
+	if runtimeConfigExists(a.root) {
+		return cfg.UIInstalled
+	}
+	_, _, err := a.controlPlaneCommand()
+	return err == nil
+}
+
+func loadRuntimeConfig(installRoot string) RuntimeConfig {
+	data, err := os.ReadFile(filepath.Join(installRoot, runtimeConfigFile))
+	if err != nil {
+		return RuntimeConfig{UIInstalled: true}
+	}
+	var cfg RuntimeConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return RuntimeConfig{UIInstalled: true}
+	}
+	return cfg
+}
+
+func runtimeConfigExists(installRoot string) bool {
+	return fileExists(filepath.Join(installRoot, runtimeConfigFile))
 }
 
 func withManagerDefaults(cfg ManagerConfig, data string) ManagerConfig {

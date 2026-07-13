@@ -69,7 +69,7 @@ Invoke-Native $pythonExe @($getPip)
 Invoke-Native $pythonExe @("-m", "pip", "install", "--upgrade", "pip")
 $sitePackages = Join-Path $pythonDir "Lib\site-packages"
 New-Item -ItemType Directory -Path $sitePackages -Force | Out-Null
-Invoke-Native $pythonExe @("-m", "pip", "install", "--upgrade", "--target", $sitePackages, "--no-warn-script-location", "hindsight-api", "sentence-transformers")
+Invoke-Native $pythonExe @("-m", "pip", "install", "--upgrade", "--target", $sitePackages, "--no-warn-script-location", "--only-binary", "litellm", "hindsight-api-slim==0.8.4", "sentence-transformers", "litellm<1.92.0")
 Invoke-Native $pythonExe @("-c", "import hindsight_api, sentence_transformers; print('Python runtime imports OK')")
 
 Get-ChildItem -LiteralPath $pythonDir -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue

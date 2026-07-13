@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const defaultRuntimeVersion = "v0.1.7"
+const defaultRuntimeVersion = "runtime-v0.1.13"
 
 func (a *App) runtimeInstallStatus() RuntimeInstallStatus {
 	cfg := loadRuntimeConfig(a.root)

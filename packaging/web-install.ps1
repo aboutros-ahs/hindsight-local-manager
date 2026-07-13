@@ -41,6 +41,7 @@ if md.version("hindsight-api-slim") != "0.8.4":
     raise SystemExit(3)
 import hindsight_api
 import sentence_transformers
+import pg0
 '@
   $probe = Join-Path $cache "python-runtime-probe.py"
   Set-Content -LiteralPath $probe -Value $code -Encoding ASCII

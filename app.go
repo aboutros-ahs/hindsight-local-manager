@@ -821,6 +821,9 @@ func (a *App) waitForHindsightReady(cfg ManagerConfig, timeout time.Duration) er
 		if checkHealth(a.hindsightURL(cfg) + "/health") {
 			return nil
 		}
+		if a.hindsight != nil && !a.processRunning(a.hindsight) {
+			return errors.New("Hindsight API exited before becoming healthy; check logs for startup errors")
+		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	return errors.New("Hindsight API did not become healthy before timeout")
@@ -915,9 +918,22 @@ func (a *App) waitProcess(proc *managedProcess) {
 	err := proc.cmd.Wait()
 	if err != nil && !strings.Contains(err.Error(), "signal: killed") {
 		a.appendLog(proc.name + " exited: " + err.Error())
+		a.clearManagedProcess(proc)
 		return
 	}
 	a.appendLog(proc.name + " exited")
+	a.clearManagedProcess(proc)
+}
+
+func (a *App) clearManagedProcess(proc *managedProcess) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.hindsight == proc {
+		a.hindsight = nil
+	}
+	if a.controlPlane == proc {
+		a.controlPlane = nil
+	}
 }
 
 func (a *App) pipeProcess(reader io.Reader, prefix string) {
@@ -1044,7 +1060,7 @@ func (a *App) hindsightEnv(cfg ManagerConfig, key string) []string {
 		"HINDSIGHT_API_LLM_API_KEY="+key,
 		"HINDSIGHT_API_LLM_MODEL="+model,
 		"HINDSIGHT_API_EMBEDDINGS_PROVIDER=local",
-		"HINDSIGHT_API_RERANKER_PROVIDER=none",
+		"HINDSIGHT_API_RERANKER_PROVIDER=rrf",
 		"HINDSIGHT_API_WORKER_MAX_SLOTS=2",
 		"HINDSIGHT_API_RETAIN_MAX_CONCURRENT=1",
 		"HINDSIGHT_API_RECALL_MAX_CONCURRENT=2",

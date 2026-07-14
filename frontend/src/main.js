@@ -20,8 +20,8 @@ import {
   InstallOpenCodeMCPAt,
   InstallCodexHooks,
   InstallHindsightUI,
-  SaveUpdateSettings,
-  ClearUpdateToken,
+  SetLocalRerankerEnabled,
+  SetUpdateCheckOnLaunch,
   CheckForUpdate,
   DownloadUpdate,
   InstallDownloadedUpdate,
@@ -126,24 +126,23 @@ function renderFallback(error) {
 function toolsPage(s, cfg) {
   const update = s.update || {};
   const progress = Number.isFinite(update.progress) ? update.progress : 0;
-  const canDownload = update.hasUpdate && update.state !== 'downloading' && update.state !== 'downloaded';
+  const updateBusy = update.state === 'downloading' || update.state === 'extracting';
+  const canDownload = update.hasUpdate && !updateBusy && update.state !== 'downloaded';
   const canInstall = update.state === 'downloaded';
+  const showProgress = update.state === 'downloading' || update.state === 'extracting' || update.state === 'downloaded';
   return `
     <section class="panel hero-panel">
       <div class="panel-head">
         <p class="overline">TOOLS</p>
         <h2>App Updates</h2>
       </div>
-      <div class="service-grid">
-        ${dependencyCard('Current Version', update.state === 'available' ? 'UPDATE READY' : 'INSTALLED', s.version || update.currentVersion || '0.1.0', update.message || 'Configure a GitHub repo to check releases.')}
-        ${dependencyCard('GitHub Token', update.tokenConfigured ? 'CONFIGURED' : 'OPTIONAL', cfg.update?.githubRepo || 'owner/repo', 'Private repos need a fine-grained token with Contents read access. The token is stored locally, not committed.')}
-      </div>
-      <div class="progress-wrap">
+      <p class="muted-copy">${escapeHtml(update.message || 'Updates are downloaded from the official public GitHub release channel.')}</p>
+      ${showProgress ? `<div class="progress-wrap">
         <div class="progress-meta"><span>${escapeHtml(update.state || 'idle')}</span><span>${progress}%</span></div>
         <div class="progress-bar"><i style="width:${Math.max(0, Math.min(100, progress))}%"></i></div>
-      </div>
+      </div>` : ''}
       <div class="actions">
-        <button class="primary" data-action="check-update">CHECK FOR UPDATE</button>
+        <button class="primary" data-action="check-update"${updateBusy ? ' disabled' : ''}>CHECK FOR UPDATE</button>
         <button data-action="download-update"${canDownload ? '' : ' disabled'}>DOWNLOAD UPDATE</button>
         <button data-action="install-update"${canInstall ? '' : ' disabled'}>RESTART TO INSTALL</button>
         ${update.releaseUrl ? `<button data-action="open-release">OPEN RELEASE</button>` : ''}
@@ -158,17 +157,12 @@ function toolsPage(s, cfg) {
     </section>
 
     <section class="panel config-panel">
-      <div class="panel-head"><p class="overline">UPDATER</p><h2>GitHub Release Source</h2></div>
-      <div class="form-grid compact">
-        ${input('updateRepo', 'GITHUB_REPO', cfg.update?.githubRepo || '')}
-        ${passwordInput('updateToken', update.tokenConfigured ? 'TOKEN SAVED - LEAVE BLANK TO KEEP' : 'GITHUB_TOKEN_FOR_PRIVATE_REPO', '')}
-      </div>
+      <div class="panel-head"><p class="overline">UPDATER</p><h2>Update Preference</h2></div>
       <div class="check-grid">
         ${checkbox('updateCheckOnLaunch', 'CHECK FOR UPDATES ON APP LAUNCH', cfg.update?.checkOnLaunch)}
       </div>
       <div class="actions">
-        <button class="primary" data-action="save-update-settings">SAVE UPDATE SETTINGS</button>
-        <button data-action="clear-update-token"${update.tokenConfigured ? '' : ' disabled'}>CLEAR TOKEN</button>
+        <button data-action="save-update-preference">SAVE PREFERENCE</button>
       </div>
     </section>
 
@@ -246,7 +240,7 @@ function setupPage(s, cfg) {
         ${runtimeComponentCard('Python Runtime', runtime.python, '')}
         ${runtimeComponentCard('Hindsight UI', runtime.controlPlane, runtime.controlPlane?.installed ? '' : '<button data-action="install-ui">INSTALL UI</button>')}
         ${runtime.controlPlane?.installed ? runtimeComponentCard('Node Runtime', runtime.node, '') : ''}
-        ${runtimeComponentCard('Local Reranker', runtime.reranker, '')}
+        ${runtimeComponentCard('Local Reranker', runtime.reranker, `<button data-action="toggle-reranker">${cfg.localRerankerEnabled ? 'DISABLE' : 'ENABLE'}</button>`)}
         ${dependencyCard('OpenCode CLI', s.openCode?.healthy ? 'SESSION READY' : 'ON DEMAND', s.openCode?.url || 'http://127.0.0.1:4096', `Bridge launches ${cfg.bridge?.openCodeBin || s.openCode?.detail || 'opencode'} when Hindsight needs Copilot.`)}
         ${dependencyCard('Default Memory Bank', s.hindsight?.healthy ? 'READY' : 'API OFF', 'bank: default', 'Created automatically after Hindsight API starts. Run manually if first-run setup was skipped.', `<button data-action="ensure-default-bank"${s.hindsight?.healthy ? '' : ' disabled title="Start Hindsight API first"'}>ENSURE BANK</button>`)}
         ${integrationCard('OpenCode Plugin', s.openCodePlugin, '<button data-action="install-opencode-plugin">INSTALL PLUGIN</button>')}
@@ -371,10 +365,6 @@ function input(id, label, value) {
   return `<label class="field"><span>${label}</span><input id="${id}" value="${escapeHtml(value)}" /></label>`;
 }
 
-function passwordInput(id, label, value) {
-  return `<label class="field"><span>${label}</span><input id="${id}" type="password" autocomplete="off" value="${escapeHtml(value)}" /></label>`;
-}
-
 function checkbox(id, label, checked) {
   return `<label class="check"><input id="${id}" type="checkbox" ${checked ? 'checked' : ''}/><span>${label}</span></label>`;
 }
@@ -462,15 +452,17 @@ async function runAction(action, source) {
     if (action === 'select-opencode-config') await finishOpenCodeInstall(source?.dataset.installKind, source?.dataset.configPath);
     if (action === 'cancel-opencode-config') state.openCodeInstall = null;
     if (action === 'install-codex') await InstallCodexHooks();
-    if (action === 'save-update-settings') await saveUpdateSettings();
-    if (action === 'clear-update-token') await ClearUpdateToken();
+    if (action === 'toggle-reranker') await SetLocalRerankerEnabled(!Boolean(state.status?.config?.localRerankerEnabled));
+    if (action === 'save-update-preference') await SetUpdateCheckOnLaunch(Boolean(document.querySelector('#updateCheckOnLaunch')?.checked));
     if (action === 'check-update') await CheckForUpdate();
     if (action === 'download-update') await DownloadUpdate();
     if (action === 'install-update') await InstallDownloadedUpdate();
     if (action === 'open-release') await openExternal(state.status?.update?.releaseUrl);
     if (action === 'save-config') await saveConfig();
     if (isStopAction(action)) await delay(450);
-    if (state.openCodeInstall && (action === 'install-opencode-plugin' || action === 'install-opencode-mcp')) {
+    if (action === 'toggle-reranker') {
+      state.message = 'RERANKER SETTING SAVED - RESTART SERVICES TO APPLY';
+    } else if (state.openCodeInstall && (action === 'install-opencode-plugin' || action === 'install-opencode-mcp')) {
       state.message = 'CHOOSE OPENCODE CONFIG';
     } else {
       state.message = `${action.toUpperCase()} OK`;
@@ -481,13 +473,6 @@ async function runAction(action, source) {
   clearStarting(action);
   clearStopping(action);
   await refresh();
-}
-
-async function saveUpdateSettings() {
-  const repo = document.querySelector('#updateRepo')?.value || '';
-  const token = document.querySelector('#updateToken')?.value || '';
-  const checkOnLaunch = Boolean(document.querySelector('#updateCheckOnLaunch')?.checked);
-  await SaveUpdateSettings(repo, token, checkOnLaunch);
 }
 
 async function openExternal(url) {

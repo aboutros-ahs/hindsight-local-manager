@@ -37,6 +37,7 @@ const (
 	defaultBankID        = "default"
 	defaultUpdateRepo    = "aboutros-ahs/hindsight-local-manager"
 	startupReadyTimeout  = 180 * time.Second
+	uiReadyTimeout       = 30 * time.Second
 )
 
 var appVersion = appVersionFallback
@@ -97,13 +98,13 @@ type ManagerConfig struct {
 	HindsightPort         string       `json:"hindsightPort"`
 	ControlPlanePort      string       `json:"controlPlanePort"`
 	DynamicBankIDs        bool         `json:"dynamicBankIds"`
+	LocalRerankerEnabled  bool         `json:"localRerankerEnabled"`
 	Autostart             bool         `json:"autostart"`
 	Debug                 bool         `json:"debug"`
 }
 
 type UpdateConfig struct {
-	GitHubRepo    string `json:"githubRepo"`
-	CheckOnLaunch bool   `json:"checkOnLaunch"`
+	CheckOnLaunch bool `json:"checkOnLaunch"`
 }
 
 type RuntimeConfig struct {
@@ -217,7 +218,7 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}()
 	}
-	if err == nil && cfg.Update.CheckOnLaunch && strings.TrimSpace(cfg.Update.GitHubRepo) != "" {
+	if err == nil && cfg.Update.CheckOnLaunch {
 		go func() {
 			if _, err := a.CheckForUpdate(); err != nil {
 				a.appendLog("update check failed: " + err.Error())
@@ -262,6 +263,23 @@ func (a *App) SaveConfig(cfg ManagerConfig) error {
 		return err
 	}
 	return os.WriteFile(a.configPath(), append(data, '\n'), 0600)
+}
+
+func (a *App) SetLocalRerankerEnabled(enabled bool) error {
+	cfg, err := a.LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg.LocalRerankerEnabled = enabled
+	if err := a.SaveConfig(cfg); err != nil {
+		return err
+	}
+	state := "disabled"
+	if enabled {
+		state = "enabled"
+	}
+	a.appendLog("local reranker " + state + "; restart Hindsight API to apply")
+	return nil
 }
 
 func (a *App) GetStatus() (ManagerStatus, error) {
@@ -611,6 +629,10 @@ func (a *App) StartControlPlane() error {
 	go a.pipeProcess(stderr, "hindsight-ui:error")
 	go a.waitProcess(a.controlPlane)
 	a.appendLog("hindsight ui starting at " + a.controlPlane.url)
+	if err := a.waitForControlPlaneReady(uiURL, uiReadyTimeout); err != nil {
+		a.failSetup("Hindsight UI", err)
+		return err
+	}
 	if startedSetup {
 		a.updateSetupStep("Hindsight UI", "complete", 100, "UI started")
 		a.finishSetup("Hindsight UI ready")
@@ -849,6 +871,20 @@ func (a *App) waitForHindsightReady(cfg ManagerConfig, timeout time.Duration) er
 	return errors.New("Hindsight API did not become healthy before timeout")
 }
 
+func (a *App) waitForControlPlaneReady(url string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if checkHealth(url) {
+			return nil
+		}
+		if !a.processRunning(a.controlPlane) {
+			return errors.New("Hindsight UI exited before becoming healthy; check logs for startup errors")
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	return errors.New("Hindsight UI did not become healthy before timeout")
+}
+
 func (a *App) ensureDefaultMemoryBankWhenReady(cfg ManagerConfig) {
 	if err := a.waitForHindsightReady(cfg, startupReadyTimeout); err != nil {
 		a.appendLog("default memory bank setup skipped: " + err.Error())
@@ -1046,6 +1082,10 @@ func (a *App) observeHindsightSetupLog(line string) {
 		a.updateSetupStep("Embedding model", "complete", 100, "Embedding model ready")
 	case strings.Contains(lower, "embeddings: initializing local provider") || strings.Contains(lower, "loading sentencetransformer"):
 		a.updateSetupStep("Embedding model", "running", 75, "Loading embedding model into memory")
+	case strings.Contains(lower, "reranker") && strings.Contains(lower, "initializ") && strings.Contains(lower, "local"):
+		a.updateSetupStep("Hindsight API", "running", 60, "Loading local reranker model")
+	case strings.Contains(lower, "reranker") && strings.Contains(lower, "local provider initialized"):
+		a.updateSetupStep("Hindsight API", "running", 64, "Local reranker ready")
 	case strings.Contains(lower, "starting embedded postgresql"):
 		a.updateSetupStep("Hindsight API", "running", 65, "Starting embedded database")
 	case strings.Contains(lower, "postgresql started"):
@@ -1098,6 +1138,10 @@ func (a *App) hindsightURL(cfg ManagerConfig) string {
 func (a *App) hindsightEnv(cfg ManagerConfig, key string) []string {
 	bridgeURL := fmt.Sprintf("http://%s:%s/v1", valueOr(cfg.Bridge.Host, defaultBridgeHost), valueOr(cfg.Bridge.Port, defaultBridgePort))
 	model := valueOr(cfg.Bridge.DefaultModel, "github-copilot/gpt-5.4-mini")
+	rerankerProvider := "rrf"
+	if cfg.LocalRerankerEnabled {
+		rerankerProvider = "local"
+	}
 	return append(a.modelEnv(),
 		"PYTHONUTF8=1",
 		"PYTHONIOENCODING=utf-8",
@@ -1108,7 +1152,8 @@ func (a *App) hindsightEnv(cfg ManagerConfig, key string) []string {
 		"HINDSIGHT_API_LLM_API_KEY="+key,
 		"HINDSIGHT_API_LLM_MODEL="+model,
 		"HINDSIGHT_API_EMBEDDINGS_PROVIDER=local",
-		"HINDSIGHT_API_RERANKER_PROVIDER=rrf",
+		"HINDSIGHT_API_RERANKER_PROVIDER="+rerankerProvider,
+		"HINDSIGHT_API_RERANKER_LOCAL_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2",
 		"HINDSIGHT_API_WORKER_MAX_SLOTS=2",
 		"HINDSIGHT_API_RETAIN_MAX_CONCURRENT=1",
 		"HINDSIGHT_API_RECALL_MAX_CONCURRENT=2",
@@ -1240,7 +1285,6 @@ func runtimeConfigExists(installRoot string) bool {
 
 func withManagerDefaults(cfg ManagerConfig, data string) ManagerConfig {
 	cfg.Bridge = withBridgeDefaults(cfg.Bridge, data)
-	cfg.Update.GitHubRepo = valueOr(cfg.Update.GitHubRepo, defaultUpdateRepo)
 	cfg.HindsightHost = valueOr(cfg.HindsightHost, defaultHindsightHost)
 	cfg.HindsightPort = valueOr(cfg.HindsightPort, defaultHindsightPort)
 	cfg.ControlPlanePort = valueOr(cfg.ControlPlanePort, defaultUIPort)

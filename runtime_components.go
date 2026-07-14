@@ -19,6 +19,7 @@ const defaultRuntimeVersion = "runtime-v0.1.13"
 
 func (a *App) runtimeInstallStatus() RuntimeInstallStatus {
 	cfg := loadRuntimeConfig(a.root)
+	managerCfg, _ := a.LoadConfig()
 	resourcesRoot := runtimeResourcesRoot(a.root)
 	version := valueOr(cfg.RuntimeVersion, defaultRuntimeVersion)
 	python := runtimePythonExe(a.root)
@@ -35,6 +36,14 @@ func (a *App) runtimeInstallStatus() RuntimeInstallStatus {
 
 	pythonSource := valueOr(cfg.PythonSource, runtimeSourceForPath(python, resourcesRoot))
 	nodeSource := valueOr(cfg.NodeSource, runtimeSourceForPath(node, resourcesRoot))
+	rerankerSource := "disabled"
+	rerankerPath := ""
+	rerankerDetail := "RRF ranking enabled; local neural reranking is disabled to reduce CPU and memory use"
+	if managerCfg.LocalRerankerEnabled {
+		rerankerSource = "local"
+		rerankerPath = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+		rerankerDetail = "enabled; model downloads on first startup. Restart services after changing this setting"
+	}
 	return RuntimeInstallStatus{
 		ResourcesRoot: resourcesRoot,
 		Version:       version,
@@ -60,9 +69,10 @@ func (a *App) runtimeInstallStatus() RuntimeInstallStatus {
 			Detail:    controlPlaneDetail(cfg.UIInstalled, cli),
 		},
 		Reranker: RuntimeComponentStatus{
-			Installed: false,
-			Source:    "disabled",
-			Detail:    "disabled by default to reduce CPU and memory use",
+			Installed: managerCfg.LocalRerankerEnabled,
+			Source:    rerankerSource,
+			Path:      rerankerPath,
+			Detail:    rerankerDetail,
 		},
 	}
 }
@@ -197,9 +207,6 @@ func (a *App) InstallHindsightUI() error {
 func (a *App) installRuntimeComponent(version, kind, runtimeRoot, label string) error {
 	asset := fmt.Sprintf("Hindsight-Local-Manager-%s-%s.zip", version, kind)
 	repo := defaultUpdateRepo
-	if cfg, err := a.LoadConfig(); err == nil {
-		repo = valueOr(cfg.Update.GitHubRepo, defaultUpdateRepo)
-	}
 	url := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", repo, version, asset)
 	cachePath := filepath.Join(a.data, "runtime-downloads", version, asset)
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0700); err != nil {

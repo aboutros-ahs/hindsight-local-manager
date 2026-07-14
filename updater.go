@@ -19,19 +19,18 @@ import (
 )
 
 type UpdateStatus struct {
-	CurrentVersion  string `json:"currentVersion"`
-	LatestVersion   string `json:"latestVersion"`
-	HasUpdate       bool   `json:"hasUpdate"`
-	State           string `json:"state"`
-	Message         string `json:"message"`
-	Progress        int    `json:"progress"`
-	AssetName       string `json:"assetName"`
-	PackageType     string `json:"packageType"`
-	ReleaseURL      string `json:"releaseUrl"`
-	DownloadPath    string `json:"downloadPath"`
-	ExtractPath     string `json:"extractPath"`
-	TokenConfigured bool   `json:"tokenConfigured"`
-	assetAPIURL     string
+	CurrentVersion string `json:"currentVersion"`
+	LatestVersion  string `json:"latestVersion"`
+	HasUpdate      bool   `json:"hasUpdate"`
+	State          string `json:"state"`
+	Message        string `json:"message"`
+	Progress       int    `json:"progress"`
+	AssetName      string `json:"assetName"`
+	PackageType    string `json:"packageType"`
+	ReleaseURL     string `json:"releaseUrl"`
+	DownloadPath   string `json:"downloadPath"`
+	ExtractPath    string `json:"extractPath"`
+	assetAPIURL    string
 }
 
 type githubRelease struct {
@@ -56,50 +55,22 @@ func (a *App) GetUpdateStatus() UpdateStatus {
 		status.State = "idle"
 	}
 	status.CurrentVersion = appVersion
-	status.TokenConfigured = a.githubTokenConfigured()
 	return status
 }
 
-func (a *App) SaveUpdateSettings(repo, token string, checkOnLaunch bool) error {
-	repo = strings.TrimSpace(repo)
-	if repo != "" && !validGitHubRepo(repo) {
-		return errors.New("GitHub repo must look like owner/repo")
-	}
+func (a *App) SetUpdateCheckOnLaunch(enabled bool) error {
 	cfg, err := a.LoadConfig()
 	if err != nil {
 		return err
 	}
-	cfg.Update.GitHubRepo = repo
-	cfg.Update.CheckOnLaunch = checkOnLaunch
-	if err := a.SaveConfig(cfg); err != nil {
-		return err
-	}
-	if strings.TrimSpace(token) != "" {
-		return a.writeGitHubToken(token)
-	}
-	return nil
-}
-
-func (a *App) ClearUpdateToken() error {
-	path := a.githubTokenPath()
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
+	cfg.Update.CheckOnLaunch = enabled
+	return a.SaveConfig(cfg)
 }
 
 func (a *App) CheckForUpdate() (UpdateStatus, error) {
-	cfg, err := a.LoadConfig()
-	if err != nil {
-		return UpdateStatus{}, err
-	}
-	repo := strings.TrimSpace(cfg.Update.GitHubRepo)
-	if !validGitHubRepo(repo) {
-		return UpdateStatus{}, errors.New("set GitHub repo as owner/repo before checking for updates")
-	}
 	a.setUpdateStatus(UpdateStatus{CurrentVersion: appVersion, State: "checking", Message: "Checking GitHub releases...", Progress: 0})
 
-	release, err := a.fetchLatestRelease(repo)
+	release, err := a.fetchLatestRelease(defaultUpdateRepo)
 	if err != nil {
 		status := UpdateStatus{CurrentVersion: appVersion, State: "error", Message: err.Error()}
 		a.setUpdateStatus(status)
@@ -142,7 +113,7 @@ func (a *App) DownloadUpdate() (UpdateStatus, error) {
 	if !status.HasUpdate || status.assetAPIURL == "" {
 		return a.GetUpdateStatus(), errors.New("check for an available update before downloading")
 	}
-	if status.State == "downloading" {
+	if status.State == "downloading" || status.State == "extracting" {
 		return a.GetUpdateStatus(), nil
 	}
 	status.State = "downloading"
@@ -227,7 +198,7 @@ func (a *App) fetchLatestRelease(repo string) (githubRelease, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return githubRelease{}, errors.New("release not found; for private repos set a GitHub token with repo read access")
+		return githubRelease{}, errors.New("official release not found")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
@@ -309,6 +280,10 @@ func (a *App) downloadUpdateAsset(status UpdateStatus) {
 	status.Progress = 100
 	status.DownloadPath = path
 	if strings.EqualFold(filepath.Ext(path), ".zip") {
+		extracting := status
+		extracting.State = "extracting"
+		extracting.Message = "Extracting update..."
+		a.setUpdateStatus(extracting)
 		extractPath, err := extractUpdateBundle(path, filepath.Join(filepath.Dir(path), "extracted"))
 		if err != nil {
 			a.setUpdateError(err)
@@ -332,30 +307,7 @@ func (a *App) downloadUpdateAsset(status UpdateStatus) {
 func (a *App) applyGitHubHeaders(req *http.Request, accept string) {
 	req.Header.Set("Accept", accept)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if token := a.readGitHubToken(); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-}
-
-func (a *App) readGitHubToken() string {
-	if data, err := os.ReadFile(a.githubTokenPath()); err == nil {
-		return strings.TrimSpace(string(data))
-	}
-	return strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
-}
-
-func (a *App) writeGitHubToken(token string) error {
-	path := a.githubTokenPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(strings.TrimSpace(token)+"\n"), 0600)
-}
-
-func (a *App) githubTokenConfigured() bool { return a.readGitHubToken() != "" }
-
-func (a *App) githubTokenPath() string {
-	return filepath.Join(a.data, "secrets", "github-release-token")
+	req.Header.Set("User-Agent", "Hindsight-Local-Manager/"+appVersion)
 }
 
 func (a *App) setUpdateStatus(status UpdateStatus) {
@@ -376,11 +328,6 @@ func (a *App) setUpdateError(err error) {
 	a.updateStatus = status
 	a.updateMu.Unlock()
 	a.appendLog("update failed: " + err.Error())
-}
-
-func validGitHubRepo(repo string) bool {
-	parts := strings.Split(repo, "/")
-	return len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" && !strings.Contains(repo, " ")
 }
 
 func selectUpdaterAsset(assets []githubAsset) (githubAsset, bool) {

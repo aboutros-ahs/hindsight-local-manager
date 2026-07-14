@@ -6,8 +6,6 @@ export function CancelSetup():Promise<void>;
 
 export function CheckForUpdate():Promise<main.UpdateStatus>;
 
-export function ClearUpdateToken():Promise<void>;
-
 export function CopyText(arg1:string):Promise<void>;
 
 export function DownloadUpdate():Promise<main.UpdateStatus>;
@@ -52,11 +50,13 @@ export function QuitApp():Promise<void>;
 
 export function SaveConfig(arg1:main.ManagerConfig):Promise<void>;
 
-export function SaveUpdateSettings(arg1:string,arg2:string,arg3:boolean):Promise<void>;
-
 export function SetAutostart(arg1:boolean):Promise<void>;
 
+export function SetLocalRerankerEnabled(arg1:boolean):Promise<void>;
+
 export function SetTrayManager(arg1:main.TrayManager):Promise<void>;
+
+export function SetUpdateCheckOnLaunch(arg1:boolean):Promise<void>;
 
 export function ShowWindow():Promise<void>;
 

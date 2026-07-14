@@ -55,7 +55,6 @@ export namespace main {
 	    }
 	}
 	export class UpdateConfig {
-	    githubRepo: string;
 	    checkOnLaunch: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -64,7 +63,6 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.githubRepo = source["githubRepo"];
 	        this.checkOnLaunch = source["checkOnLaunch"];
 	    }
 	}
@@ -78,6 +76,7 @@ export namespace main {
 	    hindsightPort: string;
 	    controlPlanePort: string;
 	    dynamicBankIds: boolean;
+	    localRerankerEnabled: boolean;
 	    autostart: boolean;
 	    debug: boolean;
 	
@@ -96,6 +95,7 @@ export namespace main {
 	        this.hindsightPort = source["hindsightPort"];
 	        this.controlPlanePort = source["controlPlanePort"];
 	        this.dynamicBankIds = source["dynamicBankIds"];
+	        this.localRerankerEnabled = source["localRerankerEnabled"];
 	        this.autostart = source["autostart"];
 	        this.debug = source["debug"];
 	    }
@@ -244,7 +244,6 @@ export namespace main {
 	    releaseUrl: string;
 	    downloadPath: string;
 	    extractPath: string;
-	    tokenConfigured: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new UpdateStatus(source);
@@ -263,7 +262,6 @@ export namespace main {
 	        this.releaseUrl = source["releaseUrl"];
 	        this.downloadPath = source["downloadPath"];
 	        this.extractPath = source["extractPath"];
-	        this.tokenConfigured = source["tokenConfigured"];
 	    }
 	}
 	export class ServiceStatus {

@@ -10,10 +10,6 @@ export function CheckForUpdate() {
   return window['go']['main']['App']['CheckForUpdate']();
 }
 
-export function ClearUpdateToken() {
-  return window['go']['main']['App']['ClearUpdateToken']();
-}
-
 export function CopyText(arg1) {
   return window['go']['main']['App']['CopyText'](arg1);
 }
@@ -102,16 +98,20 @@ export function SaveConfig(arg1) {
   return window['go']['main']['App']['SaveConfig'](arg1);
 }
 
-export function SaveUpdateSettings(arg1, arg2, arg3) {
-  return window['go']['main']['App']['SaveUpdateSettings'](arg1, arg2, arg3);
-}
-
 export function SetAutostart(arg1) {
   return window['go']['main']['App']['SetAutostart'](arg1);
 }
 
+export function SetLocalRerankerEnabled(arg1) {
+  return window['go']['main']['App']['SetLocalRerankerEnabled'](arg1);
+}
+
 export function SetTrayManager(arg1) {
   return window['go']['main']['App']['SetTrayManager'](arg1);
+}
+
+export function SetUpdateCheckOnLaunch(arg1) {
+  return window['go']['main']['App']['SetUpdateCheckOnLaunch'](arg1);
 }
 
 export function ShowWindow() {

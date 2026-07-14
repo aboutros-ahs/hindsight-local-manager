@@ -2,6 +2,7 @@ import './styles.css';
 import {
   GetStatus,
   GetSetupStatus,
+  CancelSetup,
   LoadConfig,
   SaveConfig,
   StartAll,
@@ -246,7 +247,7 @@ function setupPage(s, cfg) {
         ${runtimeComponentCard('Hindsight UI', runtime.controlPlane, runtime.controlPlane?.installed ? '' : '<button data-action="install-ui">INSTALL UI</button>')}
         ${runtime.controlPlane?.installed ? runtimeComponentCard('Node Runtime', runtime.node, '') : ''}
         ${runtimeComponentCard('Local Reranker', runtime.reranker, '')}
-        ${dependencyCard('OpenCode CLI', s.openCode?.healthy ? 'SESSION READY' : 'ON DEMAND', s.openCode?.url || 'http://127.0.0.1:4096', `Hidden bridge launches ${cfg.bridge?.openCodeBin || s.openCode?.detail || 'opencode'} when Hindsight needs Copilot.`)}
+        ${dependencyCard('OpenCode CLI', s.openCode?.healthy ? 'SESSION READY' : 'ON DEMAND', s.openCode?.url || 'http://127.0.0.1:4096', `Bridge launches ${cfg.bridge?.openCodeBin || s.openCode?.detail || 'opencode'} when Hindsight needs Copilot.`)}
         ${dependencyCard('Default Memory Bank', s.hindsight?.healthy ? 'READY' : 'API OFF', 'bank: default', 'Created automatically after Hindsight API starts. Run manually if first-run setup was skipped.', `<button data-action="ensure-default-bank"${s.hindsight?.healthy ? '' : ' disabled title="Start Hindsight API first"'}>ENSURE BANK</button>`)}
         ${integrationCard('OpenCode Plugin', s.openCodePlugin, '<button data-action="install-opencode-plugin">INSTALL PLUGIN</button>')}
         ${integrationCard('OpenCode MCP', s.openCodeMcp, '<button data-action="install-opencode-mcp">INSTALL MCP</button>')}
@@ -336,6 +337,7 @@ function openCodeConfigDialog() {
 function setupProgressDialog(setup = {}) {
   if (!setup.active && setup !== state.setupOverlay) return '';
   const steps = setup.steps || [];
+  const canCancel = setup.active && String(setup.title || '').startsWith('Starting');
   return `<div class="modal-backdrop setup-backdrop">
     <section class="modal panel setup-modal">
       <div class="panel-head"><p class="overline">LOCAL_SETUP</p><h2>${escapeHtml(setup.title || 'Preparing Services')}</h2></div>
@@ -343,13 +345,17 @@ function setupProgressDialog(setup = {}) {
       <div class="setup-step-list">
         ${steps.map((step) => setupStep(step)).join('')}
       </div>
+      <div class="actions">
+        ${canCancel ? '<button data-action="cancel-setup">CANCEL STARTUP</button>' : ''}
+        ${!setup.active ? '<button data-action="close-setup">CLOSE</button>' : ''}
+      </div>
     </section>
   </div>`;
 }
 
 function setupStep(step = {}) {
   const progress = Math.max(0, Math.min(100, Number(step.progress) || 0));
-  const stateClass = step.state === 'complete' ? 'ok' : step.state === 'error' ? 'bad' : step.state === 'running' ? 'warn' : '';
+  const stateClass = step.state === 'complete' ? 'ok' : step.state === 'error' ? 'bad' : step.state === 'running' || step.state === 'cancelled' ? 'warn' : '';
   return `<div class="setup-step ${stateClass}">
     <div class="progress-meta"><span>${escapeHtml(step.name || 'Step')}</span><span>${escapeHtml(step.state || 'pending')}</span></div>
     <div class="progress-bar"><i style="width:${progress}%"></i></div>
@@ -408,16 +414,19 @@ async function runWithSetupPolling(action) {
   const poller = poll();
   try {
     await action();
-    state.setupOverlay = await GetSetupStatus();
-    render();
-    if (setupHideTimer) clearTimeout(setupHideTimer);
-    setupHideTimer = setTimeout(() => {
-      state.setupOverlay = null;
-      render();
-    }, 900);
   } finally {
     done = true;
     await poller;
+    state.setupOverlay = await GetSetupStatus();
+    render();
+    const needsAcknowledgement = (state.setupOverlay.steps || []).some((step) => step.state === 'error' || step.state === 'cancelled');
+    if (!state.setupOverlay.active && !needsAcknowledgement) {
+      if (setupHideTimer) clearTimeout(setupHideTimer);
+      setupHideTimer = setTimeout(() => {
+        state.setupOverlay = null;
+        render();
+      }, 900);
+    }
   }
 }
 
@@ -428,6 +437,11 @@ async function runAction(action, source) {
     state.message = `${action.toUpperCase()}...`;
     render();
     if (action === 'start-all') await runWithSetupPolling(() => StartAll());
+    if (action === 'cancel-setup') {
+      await CancelSetup();
+      state.setupOverlay = await GetSetupStatus();
+    }
+    if (action === 'close-setup') state.setupOverlay = null;
     if (action === 'stop-all') await StopAll();
     if (action === 'toggle-hindsight') {
       if (state.status?.hindsight?.running || state.status?.hindsight?.healthy) await StopHindsight();

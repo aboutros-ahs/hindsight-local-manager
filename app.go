@@ -36,6 +36,7 @@ const (
 	defaultUIPort        = "9999"
 	defaultBankID        = "default"
 	defaultUpdateRepo    = "aboutros-ahs/hindsight-local-manager"
+	startupReadyTimeout  = 180 * time.Second
 )
 
 var appVersion = appVersionFallback
@@ -337,17 +338,17 @@ func (a *App) GetStatus() (ManagerStatus, error) {
 
 func (a *App) StartAll() error {
 	a.startSetup("Starting Hindsight services", []SetupStep{
-		{Name: "Hidden bridge", State: "pending", Progress: 0, Detail: "Waiting to start"},
+		{Name: "Bridge", State: "pending", Progress: 0, Detail: "Waiting to start"},
 		{Name: "Embedding model", State: "pending", Progress: 0, Detail: "Checking local cache"},
 		{Name: "Hindsight API", State: "pending", Progress: 0, Detail: "Waiting to start"},
 		{Name: "Hindsight UI", State: "pending", Progress: 0, Detail: "Waiting for API"},
 	})
-	a.updateSetupStep("Hidden bridge", "running", 20, "Starting hidden bridge")
+	a.updateSetupStep("Bridge", "running", 20, "Starting bridge")
 	if err := a.StartBridge(); err != nil {
-		a.failSetup("Hidden bridge", err)
+		a.failSetup("Bridge", err)
 		return err
 	}
-	a.updateSetupStep("Hidden bridge", "complete", 100, "Bridge ready")
+	a.updateSetupStep("Bridge", "complete", 100, "Bridge ready")
 	if err := a.StartHindsight(); err != nil {
 		a.failSetup("Hindsight API", err)
 		return err
@@ -356,7 +357,7 @@ func (a *App) StartAll() error {
 	if err != nil {
 		return err
 	}
-	if err := a.waitForHindsightReady(cfg, 60*time.Second); err != nil {
+	if err := a.waitForHindsightReady(cfg, startupReadyTimeout); err != nil {
 		a.failSetup("Hindsight API", err)
 		return err
 	}
@@ -385,7 +386,7 @@ func (a *App) startLaunchServices(cfg ManagerConfig) error {
 	if err := a.StartHindsight(); err != nil {
 		return err
 	}
-	if err := a.waitForHindsightReady(cfg, 60*time.Second); err != nil {
+	if err := a.waitForHindsightReady(cfg, startupReadyTimeout); err != nil {
 		return err
 	}
 	if err := a.EnsureDefaultMemoryBank(); err != nil {
@@ -405,6 +406,25 @@ func (a *App) startLaunchServices(cfg ManagerConfig) error {
 func (a *App) StopAll() error {
 	_ = a.StopControlPlane()
 	return a.StopHindsight()
+}
+
+func (a *App) CancelSetup() error {
+	a.setupMu.Lock()
+	if !a.setupStatus.Active {
+		a.setupMu.Unlock()
+		return nil
+	}
+	for i := range a.setupStatus.Steps {
+		if a.setupStatus.Steps[i].State == "pending" || a.setupStatus.Steps[i].State == "running" {
+			a.setupStatus.Steps[i].State = "cancelled"
+			a.setupStatus.Steps[i].Detail = "Canceled by user"
+		}
+	}
+	a.setupStatus.Message = "Startup canceled"
+	a.setupStatus.Active = false
+	a.setupMu.Unlock()
+	a.appendLog("startup canceled by user")
+	return a.StopAll()
 }
 
 func (a *App) StartBridge() error {
@@ -449,7 +469,7 @@ func (a *App) StartHindsight() error {
 	if !a.setupActive() {
 		startedSetup = true
 		a.startSetup("Starting Hindsight API", []SetupStep{
-			{Name: "Hidden bridge", State: "pending", Progress: 0, Detail: "Waiting to start"},
+			{Name: "Bridge", State: "pending", Progress: 0, Detail: "Waiting to start"},
 			{Name: "Embedding model", State: "pending", Progress: 0, Detail: "Checking local cache"},
 			{Name: "Hindsight API", State: "pending", Progress: 0, Detail: "Waiting to start"},
 		})
@@ -461,12 +481,12 @@ func (a *App) StartHindsight() error {
 		}
 		return nil
 	}
-	a.updateSetupStep("Hidden bridge", "running", 20, "Starting hidden bridge")
+	a.updateSetupStep("Bridge", "running", 20, "Starting bridge")
 	if err := a.StartBridge(); err != nil {
-		a.failSetup("Hidden bridge", err)
+		a.failSetup("Bridge", err)
 		return err
 	}
-	a.updateSetupStep("Hidden bridge", "complete", 100, "Bridge ready")
+	a.updateSetupStep("Bridge", "complete", 100, "Bridge ready")
 	cfg, err := a.LoadConfig()
 	if err != nil {
 		return err
@@ -505,7 +525,7 @@ func (a *App) StartHindsight() error {
 	go a.ensureDefaultMemoryBankWhenReady(cfg)
 	if startedSetup {
 		go func() {
-			if err := a.waitForHindsightReady(cfg, 60*time.Second); err != nil {
+			if err := a.waitForHindsightReady(cfg, startupReadyTimeout); err != nil {
 				a.failSetup("Hindsight API", err)
 				return
 			}
@@ -821,7 +841,7 @@ func (a *App) waitForHindsightReady(cfg ManagerConfig, timeout time.Duration) er
 		if checkHealth(a.hindsightURL(cfg) + "/health") {
 			return nil
 		}
-		if a.hindsight != nil && !a.processRunning(a.hindsight) {
+		if !a.processRunning(a.hindsight) {
 			return errors.New("Hindsight API exited before becoming healthy; check logs for startup errors")
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -830,7 +850,7 @@ func (a *App) waitForHindsightReady(cfg ManagerConfig, timeout time.Duration) er
 }
 
 func (a *App) ensureDefaultMemoryBankWhenReady(cfg ManagerConfig) {
-	if err := a.waitForHindsightReady(cfg, 60*time.Second); err != nil {
+	if err := a.waitForHindsightReady(cfg, startupReadyTimeout); err != nil {
 		a.appendLog("default memory bank setup skipped: " + err.Error())
 		return
 	}
@@ -1002,16 +1022,44 @@ func (a *App) updateSetupStep(name, state string, progress int, detail string) {
 }
 
 func (a *App) failSetup(name string, err error) {
-	a.updateSetupStep(name, "error", 100, err.Error())
 	a.setupMu.Lock()
 	defer a.setupMu.Unlock()
+	if !a.setupStatus.Active {
+		return
+	}
+	for i := range a.setupStatus.Steps {
+		if a.setupStatus.Steps[i].Name == name {
+			a.setupStatus.Steps[i].State = "error"
+			a.setupStatus.Steps[i].Progress = 100
+			a.setupStatus.Steps[i].Detail = err.Error()
+			break
+		}
+	}
 	a.setupStatus.Message = err.Error()
+	a.setupStatus.Active = false
 }
 
 func (a *App) observeHindsightSetupLog(line string) {
 	lower := strings.ToLower(line)
-	if strings.Contains(lower, "download") || strings.Contains(lower, "huggingface") || strings.Contains(lower, "sentence") || strings.Contains(lower, "transformer") {
-		a.updateSetupStep("Embedding model", "running", 75, "Downloading or loading model files")
+	switch {
+	case strings.Contains(lower, "embeddings: local provider initialized"):
+		a.updateSetupStep("Embedding model", "complete", 100, "Embedding model ready")
+	case strings.Contains(lower, "embeddings: initializing local provider") || strings.Contains(lower, "loading sentencetransformer"):
+		a.updateSetupStep("Embedding model", "running", 75, "Loading embedding model into memory")
+	case strings.Contains(lower, "starting embedded postgresql"):
+		a.updateSetupStep("Hindsight API", "running", 65, "Starting embedded database")
+	case strings.Contains(lower, "postgresql started"):
+		a.updateSetupStep("Hindsight API", "running", 72, "Embedded database ready")
+	case strings.Contains(lower, "verifying connection"):
+		a.updateSetupStep("Hindsight API", "running", 78, "Verifying Copilot connection")
+	case strings.Contains(lower, "connection verified"):
+		a.updateSetupStep("Hindsight API", "running", 84, "Copilot connection verified")
+	case strings.Contains(lower, "running database migrations"):
+		a.updateSetupStep("Hindsight API", "running", 90, "Running database migrations")
+	case strings.Contains(lower, "memory system initialized"):
+		a.updateSetupStep("Hindsight API", "running", 96, "Starting API server")
+	case strings.Contains(lower, "application startup complete"):
+		a.updateSetupStep("Hindsight API", "complete", 100, "API healthy")
 	}
 }
 
